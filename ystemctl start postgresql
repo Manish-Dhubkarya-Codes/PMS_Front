@@ -1,0 +1,11 @@
+[0;1;32m●[0m postgresql.service - PostgreSQL RDBMS
+     Loaded: loaded (]8;;file://srv1417997/usr/lib/systemd/system/postgresql.service\/usr/lib/systemd/system/postgresql.service]8;;\; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (exited)[0m since Thu 2026-02-26 10:12:52 UTC; 7h ago
+ Invocation: f4964079ec6c4527b510dc05ffa54512
+    Process: 929 ExecStart=/bin/true (code=exited, status=0/SUCCESS)
+   Main PID: 929 (code=exited, status=0/SUCCESS)
+   Mem peak: 1.7M
+        CPU: 4ms
+
+Feb 26 10:12:52 srv1417997 systemd[1]: Starting postgresql.service - PostgreSQL RDBMS...
+Feb 26 10:12:52 srv1417997 systemd[1]: Finished postgresql.service - PostgreSQL RDBMS.
