@@ -10,26 +10,26 @@ export default defineConfig({
     proxy: {
       // Proxy Socket.io (critical for WS upgrades)
       '/socket.io': {
-        target: 'https://api.cognicodeedutech.com',
+        target: 'http://localhost:3000',
         ws: true,
         changeOrigin: true,
         secure: false,
       },
       // Optional: Proxy API routes too
       '/api': {
-        target: 'https://api.cognicodeedutech.com',
+        target: 'http://localhost:3000',
         changeOrigin: true,
         secure: false,
       },
      
       '/vapid-public-key': {
-        target: 'https://api.cognicodeedutech.com',
+        target: 'http://localhost:3000',
         changeOrigin: true,
         secure: false,
       },
       // Add if needed for other routes (e.g., /images)
       '/images': {
-        target: 'https://api.cognicodeedutech.com',
+        target: 'http://localhost:3000',
         changeOrigin: true,
         secure: false,
       },
