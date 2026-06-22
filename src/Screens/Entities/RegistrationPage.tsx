@@ -206,6 +206,7 @@ const RegistrationModal: React.FC<Props> = ({ isOpen, onClose, title }) => {
     } else {
       setFormData((prev) => ({ ...prev, [key]: value }));
     }
+    setError(null);
   };
 
   const handleMobileChange = (value: string) => {
@@ -219,6 +220,7 @@ const handleSubmit = async () => {
     setError("Passwords do not match");
     return;
   }
+
   if (!formData.role) {
     setError("Please select a role");
     return;
@@ -229,70 +231,112 @@ const handleSubmit = async () => {
 
   // ====================== VALIDATION ======================
   if (formData.role === "Head") {
-    if (!formData.name || !formData.companyMail || !formData.password || !formData.mobile) {
-      setError("Please fill in all required fields");
+    if (!formData.name) {
+      setError("Name is required");
       return;
     }
-    if (!emailRegex.test(formData.companyMail || "")) {
-      setError("Please enter a valid email");
+    if (!formData.companyMail) {
+      setError("Email is required");
+      return;
+    }
+    if (!emailRegex.test(formData.companyMail)) {
+      setError("Please enter a valid email address");
+      return;
+    }
+    if (!formData.mobile) {
+      setError("Mobile number is required");
       return;
     }
     if (!mobileRegex.test(formData.mobile)) {
       setError("Please enter a valid mobile number (10-15 digits)");
       return;
     }
-  } else if (formData.role === "Employee" || formData.role === "Team Leader") {
-    if (
-      !formData.name ||
-      !formData.employmentId ||
-      !formData.password ||
-      !formData.designation ||
-      !formData.companyMail ||
-      !formData.gender ||
-      !formData.department
-    ) {
-      setError("Please fill in all required fields");
+    if (!formData.password) {
+      setError("Password is required");
       return;
     }
-    if (!emailRegex.test(formData.companyMail || "")) {
+  } 
+  else if (formData.role === "Employee" || formData.role === "Team Leader") {
+    if (!formData.name) {
+      setError("Name is required");
+      return;
+    }
+    if (!formData.employmentId) {
+      setError("Employee ID is required");
+      return;
+    }
+    if (!formData.designation) {
+      setError("Designation is required");
+      return;
+    }
+    if (!formData.companyMail) {
+      setError("Company email is required");
+      return;
+    }
+    if (!emailRegex.test(formData.companyMail)) {
       setError("Please enter a valid company email");
       return;
     }
-    if (formData.role === "Team Leader" && !formData.TlSecurityKey?.trim()) {
-      setError("Security Key cannot be blank");
-      return;
-    }
-  } else if (formData.role === "Client") {
-    if (
-      !formData.name ||
-      !formData.password ||
-      !formData.ClientMail ||
-      !formData.mobile ||
-      !formData.degree ||
-      !formData.requirement ||
-      !formData.TlSecurityKey
-    ) {
-      setError("Please fill in all required fields");
+    if (!formData.gender) {
+      setError("Gender is required");
       return;
     }
     if (!formData.department) {
-      setError("Please select a department");
+      setError("Department is required");
+      return;
+    }
+    if (!formData.password) {
+      setError("Password is required");
+      return;
+    }
+    if (formData.role === "Team Leader" && !formData.TlSecurityKey?.trim()) {
+      setError("Security Key is required for Team Leader");
+      return;
+    }
+  } 
+  else if (formData.role === "Client") {
+    if (!formData.name) {
+      setError("Name is required");
+      return;
+    }
+    if (!formData.ClientMail) {
+      setError("Email is required");
+      return;
+    }
+    if (!emailRegex.test(formData.ClientMail)) {
+      setError("Please enter a valid email address");
+      return;
+    }
+    if (!formData.mobile) {
+      setError("Mobile number is required");
+      return;
+    }
+    if (!mobileRegex.test(formData.mobile)) {
+      setError("Please enter a valid mobile number (10-15 digits)");
+      return;
+    }
+    if (!formData.degree) {
+      setError("Degree is required");
+      return;
+    }
+    if (!formData.requirement) {
+      setError("Requirement is required");
+      return;
+    }
+    if (!formData.department) {
+      setError("Department is required");
       return;
     }
     if (formData.department === "Others" && !customDepartment.trim()) {
       setError("Please specify your department");
       return;
     }
-    if (!emailRegex.test(formData.ClientMail || "")) {
-      setError("Please enter a valid email");
-      return;
-    }
-    if (!mobileRegex.test(formData.mobile || "")) {
-      setError("Please enter a valid mobile number (10-15 digits)");
+    if (!formData.password) {
+      setError("Password is required");
       return;
     }
     if (!formData.TlSecurityKey?.trim()) {
-      setError("Security Key cannot be blank");
+      setError("Security Key is required");
       return;
     }
   }
@@ -355,12 +399,10 @@ const handleSubmit = async () => {
       console.log("✅ Registration SUCCESS for role:", formData.role);
 
       if (formData.role === "Client") {
-        // Only Client skips OTP
         setSuccess("Your registration completed, you can now login!");
         setStep("success");
       } else {
-        // Employee, Team Leader, Head → MUST go to OTP
-        const email = formData.companyMail || "";
+        const email = formData.companyMail || formData.ClientMail || "";
         console.log("🔑 Moving to OTP screen for email:", email);
         setCurrentEmail(email);
         setStep("otp");
@@ -903,7 +945,7 @@ const handleSubmit = async () => {
                   ? "Registration completed! Check your email for the Security Key."
                   : formData.role === "Client"
                   ? "Your registration completed, you can now login!"
-                  : "Your account details submitted successfully, and will be verified within 24 hours or contact at +91xxxxxxxxxx for quick response"}
+                  : "Your account details submitted successfully, and will be verified within 24 hours."}
               </div>
               <div className="flex justify-center gap-4">
                 <div

@@ -399,59 +399,49 @@ const EmployeeLanding: React.FC = () => {
     fetchUnreadForRequests();
   }, [unreadRequests, activeTab, fetchUnreadForRequests]);
 
-  useEffect(() => {
-    const checkRole = async () => {
-      const storedUserDataB64 = localStorage.getItem("userData");
-      const storedRoleB64 = localStorage.getItem("role");
+useEffect(() => {
+  const checkRole = async () => {
+    const storedUserDataB64 = localStorage.getItem("userData");
+    const storedRoleB64 = localStorage.getItem("role");
 
-      if (!storedUserDataB64 || !storedRoleB64) {
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
+    if (!storedUserDataB64 || !storedRoleB64) {
+      console.warn("No user data or role found. Logging out...");
+      if (contextLogout) contextLogout();
+      window.location.href = "/login-reg";   // ← Hard redirect
+      return;
+    }
+
+    try {
+      const storedUserData = JSON.parse(atob(storedUserDataB64));
+      const role = atob(storedRoleB64);
+
+      const { employeeId } = storedUserData;
+      if (!employeeId || !role) {
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
         return;
       }
 
-      try {
-        const storedUserData = JSON.parse(atob(storedUserDataB64));
-        const role = atob(storedRoleB64);
-        // Extract employeeId and role from stored data
-        const { employeeId } = storedUserData;
-        if (!employeeId || !role) {
-          if (contextLogout) {
-            contextLogout();
-          }
-          navigate("/login-reg");
-          return;
-        }
+      const response = await postData("employees/verify_employee_role", {
+        employeeId: parseInt(employeeId),
+        role
+      });
 
-        // Call backend API to verify
-        const response = await postData("employees/verify_employee_role", {
-          employeeId: parseInt(employeeId), // Cast to int if needed
-          role
-        });
-
-        if (!response.status) {
-          if (contextLogout){
-            contextLogout();
-          }
-          navigate("/login-reg");
-        } else {
-          console.log("Role verified successfully.");
-        }
-      } catch (error) {
-        console.error("Error verifying role:", error);
-        // On error, clear localStorage as fallback
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
+      if (!response.status) {
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
+      } else {
+        console.log("Role verified successfully.");
       }
-    };
+    } catch (error) {
+      console.error("Error verifying role:", error);
+      if (contextLogout) contextLogout();
+      window.location.href = "/login-reg";
+    }
+  };
 
-    // Run once on mount
-    checkRole();
-  }, [navigate, contextLogout]);
+  checkRole();
+}, []); // ← Empty dependency array (important)
 
   const employeeProfile = {
     EmployeeName: employeeData?.EmployeeName ?? "Unknown Employee",
@@ -783,11 +773,11 @@ const requestedUnreadTotal = useMemo(() =>
                             is2XL ? "text-[15px]" : "text-[12px]"
                           } -tracking-[0.02rem]`}
                         >
-                          Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric"
-                })}
+                         Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                         </div>
                        <div
   className={`${

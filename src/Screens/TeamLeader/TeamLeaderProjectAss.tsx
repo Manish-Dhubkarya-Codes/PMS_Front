@@ -310,10 +310,10 @@ const TeamLeaderProjectAss: React.FC = () => {
         >
           <Button1 value={projectInfo.workstream} gradientType="gradient1" />
           <div>Submission Date: {new Date(projectInfo.deadline).toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric"
-                })}</div>
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}</div>
         </div>
         <div className="flex gap-x-1">
           <div>Project ID:</div>

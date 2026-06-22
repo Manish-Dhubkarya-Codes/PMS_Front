@@ -140,14 +140,21 @@ const TeamLeaderLanding: React.FC = () => {
     }
   }, [error]);
 
-  useEffect(() => {
-    const storedUserData = localStorage.getItem("userData");
-    const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
-    const designation = parsedData?.employeeDesignation;
-    const deptMatch = designation.match(/$$ ([^)]+) \$\$\$/);
-    const dept = deptMatch ? deptMatch[1].trim() : null;
-    setDepartment(dept);
-  }, []);
+useEffect(() => {
+  const storedUserData = localStorage.getItem("userData");
+  const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
+
+  if (!parsedData) {
+    // Don't redirect here again — checkRole already handles it
+    setDepartment(null);
+    return;
+  }
+
+  const designation = parsedData?.employeeDesignation || "";
+  const deptMatch = designation.match(/\(([^)]+)\)$/);
+  const dept = deptMatch ? deptMatch[1].trim() : null;
+  setDepartment(dept);
+}, []);
 
   useEffect(() => {
     const fetchProgress = async () => {
@@ -753,72 +760,59 @@ useEffect(() => {
     };
   }, [onEvent]);
 
-  useEffect(() => {
-    const checkRole = async () => {
-      const storedUserDataB64 = localStorage.getItem("userData");
-      const storedRoleB64 = localStorage.getItem("role");
+useEffect(() => {
+  const checkRole = async () => {
+    const storedUserDataB64 = localStorage.getItem("userData");
+    const storedRoleB64 = localStorage.getItem("role");
 
-      if (!storedUserDataB64 || !storedRoleB64) {
-        console.warn("No user data or role found. Logging out...");
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
+    // If no user data → immediately hard redirect (cleanest way)
+    if (!storedUserDataB64 || !storedRoleB64) {
+      console.warn("No user data or role found. Logging out...");
+      if (contextLogout) contextLogout();
+      
+      // Hard redirect - most reliable way to break the loop
+      window.location.href = "/login-reg";
+      return;
+    }
+
+    try {
+      const storedUserData = JSON.parse(atob(storedUserDataB64));
+      const role = atob(storedRoleB64);
+
+      // Extract department safely
+      const designation = storedUserData?.employeeDesignation || "";
+      const deptMatch = designation.match(/\(([^)]+)\)$/);
+      const dept = deptMatch ? deptMatch[1].trim() : null;
+      setDepartment(dept);
+
+      const { employeeId } = storedUserData;
+
+      if (!employeeId || !role) {
+        window.location.href = "/login-reg";
         return;
       }
 
-      try {
-        const storedUserData = JSON.parse(atob(storedUserDataB64));
-        const role = atob(storedRoleB64);
+      // Verify with backend
+      const response = await postData("employees/verify_employee_role", {
+        employeeId: parseInt(employeeId),
+        role
+      });
 
-        console.log("SRSRSRR", storedUserData);
-
-        // Extract department from employeeDesignation
-        const designation = storedUserData.employeeDesignation;
-        const deptMatch = designation.match(/\(([^)]+)\)$/);
-        const dept = deptMatch ? deptMatch[1].trim() : null;
-        setDepartment(dept);
-
-        // Extract employeeId and role from stored data
-        const { employeeId } = storedUserData;
-        if (!employeeId || !role) {
-          console.warn("Missing employeeId or role in stored data. Logging out...");
-          if (contextLogout) {
-            contextLogout();
-          }
-          navigate("/login-reg");
-          return;
-        }
-
-        // Call backend API to verify
-        const response = await postData("employees/verify_employee_role", {
-          employeeId: parseInt(employeeId), // Cast to int if needed
-          role
-        });
-
-        console.log("Verification response:", response);
-
-        if (!response.status) {
-          console.warn("Role or employeeId mismatch! Logging out...");
-          if (contextLogout) {
-            contextLogout();
-          }
-          navigate("/login-reg");
-        } else {
-          console.log("Role verified successfully.");
-        }
-      } catch (error) {
-        console.error("Error verifying role:", error);
-        // On error, clear localStorage as fallback
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
+      if (!response.status) {
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
+      } else {
+        console.log("Role verified successfully.");
       }
-    };
+    } catch (error) {
+      console.error("Error verifying role:", error);
+      if (contextLogout) contextLogout();
+      window.location.href = "/login-reg";
+    }
+  };
 
-    checkRole();
-  }, [navigate, contextLogout]);
+  checkRole();
+}, []); // ← Empty dependency array is important
 
   useEffect(() => {
     if (department) {
@@ -1362,11 +1356,11 @@ useEffect(() => {
                               className={`text-[#000000] font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"
                                 } -tracking-[0.02rem]`}
                             >
-                              Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric"
-                              })}
+                             Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                             </div>
                             <div className="flex w-[30%] items-center justify-center">
                               {displayEmployees.map((emp, idx) => {
@@ -1465,11 +1459,11 @@ useEffect(() => {
                             className={`text-[#000000] font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"
                               } -tracking-[0.02rem]`}
                           >
-                            Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-                              day: "2-digit",
-                              month: "short",
-                              year: "numeric"
-                            })}
+                           Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                           </div>
                           <div
                             className={`text-[#000000]  w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
@@ -1645,10 +1639,10 @@ useEffect(() => {
                                 } -tracking-[0.02rem]`}
                             >
                               Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric"
-                              })}
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                             </div>
                             <div
                               className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}
@@ -1921,10 +1915,10 @@ useEffect(() => {
                                 } -tracking-[0.02rem]`}
                             >
                               Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric"
-                              })}
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                             </div>
                             <div
                               className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
@@ -1999,10 +1993,10 @@ useEffect(() => {
                               } -tracking-[0.02rem]`}
                           >
                             Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-                              day: "2-digit",
-                              month: "short",
-                              year: "numeric"
-                            })}
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                           </div>
                           <div
                             className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
@@ -2110,7 +2104,7 @@ useEffect(() => {
                             >
                               Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
                                 day: "2-digit",
-                                month: "short",
+                                month: "2-digit",
                                 year: "numeric"
                               })}
                             </div>
@@ -2230,10 +2224,10 @@ useEffect(() => {
                                   } -tracking-[0.02rem]`}
                               >
                                 Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-                                  day: "2-digit",
-                                  month: "short",
-                                  year: "numeric"
-                                })}
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                               </div>
                               <div
                                 className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}

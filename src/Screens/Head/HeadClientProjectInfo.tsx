@@ -1208,11 +1208,11 @@ console.log("Project Details:", projectDetails);
     } else if (date.toDateString() === yesterday.toDateString()) {
       return "Yesterday";
     } else {
-      return date.toLocaleDateString("en-CA", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
+      return date.toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
     }
   };
 
@@ -1980,12 +1980,14 @@ const handleSendMessage = async (
                   <div className={`${is2XL ? "text-sm" : "text-xs"}`}>
                     Submission Date:{" "}
                     <span>
-                      {new Date(projectDetails?.deadline || item?.deadline || "").toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric"
-                })}
-                    </span>
+  {new Date(
+    projectDetails?.deadline || item?.deadline || ""
+  ).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  })}
+</span>
                   </div>
                   <div className={`mt-2 ${is2XL ? "text-sm" : "text-xs"}`}>
                     Budget:{" "}
@@ -2112,7 +2114,7 @@ const handleSendMessage = async (
                             <span className="font-semibold text-gray-800">
                               {new Date(
                                 projectDetails?.deadline || item?.deadline || ""
-                              ).toLocaleDateString("en-CA")}
+                              ).toLocaleDateString("en-GB")}
                             </span>
                           </div>
                         </div>

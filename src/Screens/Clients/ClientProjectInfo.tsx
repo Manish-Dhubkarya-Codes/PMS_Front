@@ -127,6 +127,7 @@ const ClientProjectInfo: React.FC<ClientProjectInfoProps> = () => {
   const [selectStream, setSelectStream] = useState<string>("");
   const [title, setTitle] = useState<string>("");
   const [submissionDate, setSubmissionDate] = useState<string>("");
+  // console.log("SSSSSSSS", submissionDate)
   const [budget, setBudget] = useState<string>("");
   const [isDateType, setIsDateType] = useState<boolean>(false);
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -608,8 +609,7 @@ const ClientProjectInfo: React.FC<ClientProjectInfoProps> = () => {
         </div>
         <div style="display: table-cell; padding: 10px;">
           <span style="display: block; font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: bold;">Deadline</span>
-          <span style="font-size: 14px; color: #ef4444; font-weight: 600;">${data.deadline || "N/A"
-      }</span>
+          <span style="font-size: 14px; color: #ef4444; font-weight: 600;">${data.deadline.split("-").reverse().join("/")}</span>
         </div>
         <div style="display: table-cell; padding: 10px;">
           <span style="display: block; font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: bold;">Budget</span>
@@ -2019,13 +2019,15 @@ const handleSendMessage = async (
                   {isProjectSubmitted && (
                     <div className={`${is2XL ? "text-sm" : "text-xs"}`}>
                       Submission Date:{" "}
-                      <span className="">
-                        {new Date(submissionDate || initialProjectDetails?.SubmissionDate).toLocaleDateString("en-GB", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric"
-                        })}
-                      </span>
+                     <span>
+  {new Date(
+    submissionDate || initialProjectDetails?.SubmissionDate
+  ).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  })}
+</span>
                     </div>
                   )}
                 </div>
@@ -2177,9 +2179,9 @@ const handleSendMessage = async (
                             <RiTimeLine size={15} color="#FF0A78" />
                             <span className="font-semibold text-gray-800">
                               {new Date(
-                                submissionDate ||
-                                initialProjectDetails?.SubmissionDate
-                              ).toLocaleDateString("en-CA")}
+  submissionDate ||
+  initialProjectDetails?.SubmissionDate
+).toLocaleDateString("en-GB")}
                             </span>
                           </div>
                           <div className="flex items-center gap-2 text-gray-500">

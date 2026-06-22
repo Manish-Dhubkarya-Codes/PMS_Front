@@ -1,6 +1,3 @@
-// Updated ProgressTracking.tsx
-// Replace the entire component code with this:
-
 import React from "react";
 import { FaBriefcase } from "react-icons/fa";
 import { RiMoneyRupeeCircleLine } from "react-icons/ri";
@@ -9,10 +6,15 @@ interface ProgressTrackingProps {
   height?: number;
   progress: { start: string; payment: string; work: string };
   onStepClick?: (index: number) => void;
-  updateType?: 'payment' | 'work'; // Prop to specify update type
+  updateType?: 'payment' | 'work';
 }
 
-const ProgressTracking: React.FC<ProgressTrackingProps> = ({ height, progress, onStepClick, updateType }) => {
+const ProgressTracking: React.FC<ProgressTrackingProps> = ({ 
+  height, 
+  progress, 
+  onStepClick, 
+  updateType 
+}) => {
   const payment_num = parseFloat(progress.payment.replace('%', '')) || 0;
   const work_num = parseFloat(progress.work.replace('%', '')) || 0;
   const min_num = Math.min(payment_num, work_num);
@@ -26,21 +28,37 @@ const ProgressTracking: React.FC<ProgressTrackingProps> = ({ height, progress, o
     ? (height - stepCount * circleSize) / connectorCount
     : 55;
 
+  // Default informative message (for Client, Head, Employee)
+  const defaultTooltip = 
+    "Project Progress for work and payment advance in 20% stages. Upon completion, both circles become blue";
+
+  // Dynamic title for clickable users (Sales TL & Technical TL)
+  const getClickableTitle = () => {
+    if (updateType === 'payment') {
+      return "Click to update payment progress 20%";
+    } else if (updateType === 'work') {
+      return "Click to update work progress 20%";
+    }
+    return "Click to update progress";
+  };
+
   return (
     <div
       className="flex flex-col items-center"
       style={{ height: height ? `${height}px` : "auto" }}
+      title={defaultTooltip}                    // ← Default hover message
     >
       {[...Array(5).keys()].map((index) => {
         const previousCompleted = index > 0 && completed_steps >= index;
         const isPaymentDone = index < payment_steps;
         const isWorkDone = index < work_steps;
-        // Make clickable based on updateType's steps
+
         const currentSteps = updateType === 'payment' ? payment_steps : work_steps;
-        const isClickable = onStepClick && index === currentSteps;
-        // Independent coloring
+        const isClickable = !!onStepClick && index === currentSteps;
+
         const outerColor = index < payment_steps ? "border-[#104A99]" : "border-gray-300";
         const innerColor = index < work_steps ? "bg-[#1B7BFF]" : "bg-gray-300";
+
         return (
           <div key={index} className="flex flex-col items-center">
             {index !== 0 && (
@@ -51,13 +69,23 @@ const ProgressTracking: React.FC<ProgressTrackingProps> = ({ height, progress, o
             )}
             
             <div
-              className={`relative rounded-full flex items-center justify-center w-[40px] h-[40px] border-4 ${outerColor} ${isClickable ? "cursor-pointer hover:opacity-80" : ""}`}
+              className={`relative rounded-full flex items-center justify-center w-[40px] h-[40px] border-4 ${outerColor} 
+                ${isClickable ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
               onClick={() => isClickable && onStepClick(index)}
+              title={isClickable ? getClickableTitle() : defaultTooltip}
             >
               <div className="absolute bottom-7 left-6 z-10">
-            <RiMoneyRupeeCircleLine size={20} color={ isPaymentDone ? "#0EE647" : "#473834"} />
-            </div>
-              <div className={`absolute inset-[4px] flex items-center justify-center rounded-full ${innerColor}`}><FaBriefcase color={ isWorkDone ? "#FF2960" : "#473834"} size={10} /></div>
+                <RiMoneyRupeeCircleLine 
+                  size={20} 
+                  color={isPaymentDone ? "#0EE647" : "#473834"} 
+                />
+              </div>
+              <div className={`absolute inset-[4px] flex items-center justify-center rounded-full ${innerColor}`}>
+                <FaBriefcase 
+                  color={isWorkDone ? "#FF2960" : "#473834"} 
+                  size={10} 
+                />
+              </div>
             </div>
           </div>
         );

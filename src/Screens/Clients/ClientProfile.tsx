@@ -40,6 +40,7 @@ const ClientProfile: React.FC = () => {
   const [projectCompleted, setProjectCompleted] = useState<number>(0);
   const [totalUnread, setTotalUnread] = useState<number>(0);
   const [loading, setLoading]=useState(true)
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const [clientData, setClientData] = useState<{
@@ -208,16 +209,16 @@ useEffect(() => {
   }
 }, [projectDetails]);
 
-  useEffect(() => {
+useEffect(() => {
   const checkClient = async () => {
     const storedUserDataB64 = localStorage.getItem("userData");
     const storedRoleB64 = localStorage.getItem("role");
 
     if (!storedUserDataB64 || !storedRoleB64) {
-      if (contextLogout) {
-        contextLogout();
-      }
-      navigate("/login-reg");
+      console.warn("No user data or role found. Logging out...");
+      setIsRedirecting(true);           // ← ADD THIS
+      if (contextLogout) contextLogout();
+      window.location.href = "/login-reg";
       return;
     }
 
@@ -226,52 +227,39 @@ useEffect(() => {
       const role = atob(storedRoleB64);
 
       if (role !== "Client") {
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
+        setIsRedirecting(true);         // ← ADD THIS
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
         return;
       }
 
       const { clientId } = storedUserData;
       if (!clientId) {
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
+        setIsRedirecting(true);         // ← ADD THIS
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
         return;
       }
 
-      // Call backend API to verify client existence
       const response = await postData("clients/verify_client", {
         clientId: parseInt(clientId),
       });
 
       if (!response.status) {
-        localStorage.removeItem("accessTokenExp");
-        localStorage.removeItem("refreshTokenExp");
-        localStorage.removeItem("role");
-        localStorage.removeItem("userData");
-        if (contextLogout) {
-          contextLogout();
-        }
-        navigate("/login-reg");
-      } else {
+        setIsRedirecting(true);         // ← ADD THIS
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
       }
     } catch (error) {
-      localStorage.removeItem("accessTokenExp");
-      localStorage.removeItem("refreshTokenExp");
-      localStorage.removeItem("role");
-      localStorage.removeItem("userData");
-      if (contextLogout) {
-        contextLogout();
-      }
-      navigate("/login-reg");
+      console.error("Error verifying client:", error);
+      setIsRedirecting(true);           // ← ADD THIS
+      if (contextLogout) contextLogout();
+      window.location.href = "/login-reg";
     }
   };
 
   checkClient();
-}, [navigate, contextLogout]);
+}, []);
 
   // Load initial data: client and projects
   useEffect(() => {
@@ -499,10 +487,10 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
     navigate("/projectupload", { state: { ProjectDetails: project } });
   };
 
-  if (!clientData) {
-    return <div>Error: Unable to load client profile. Please log in again.</div>;
-  }
-
+ if (!clientData) {
+  // Show loading while redirecting instead of ugly error
+  return <PageLoadingComponent />;
+}
     const IconAt = () => (
   <svg
     className="w-4 h-4 text-blue-600 flex-shrink-0"
@@ -798,11 +786,11 @@ const IconChat = () => (
   <div
     className={`font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
   >
-    Submission Date: {new Date(item.SubmissionDate).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric"
-    })}
+Submission Date: {new Date(item.SubmissionDate).toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
   </div>
                         <div
     className={`w-[30%] justify-center font-normal text-[12px] -tracking-[0.02rem] flex items-center`}

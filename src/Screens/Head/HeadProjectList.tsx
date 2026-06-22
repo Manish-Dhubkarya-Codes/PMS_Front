@@ -92,7 +92,7 @@ const [activeTab, setActiveTab] = useState<string>(() => {
   // Stored user data for headId
   const storedUserData = localStorage.getItem("userData");
   const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
-  const headId = parsedData?.headId || "default_head_id";
+  const headId = parsedData?.headId;
   // FIXED: useGlobalPush at top level for Head (enables push)
   // const {requestPermission} = useGlobalPush(headId,'head')
   // Memoized total unread calculation
@@ -108,6 +108,25 @@ const calculatedTotalUnread = useMemo(() =>
 
 const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
 
+useEffect(() => {
+  const storedUserDataB64 = localStorage.getItem("userData");
+  const storedRoleB64 = localStorage.getItem("role");
+
+  if (!storedUserDataB64 || !storedRoleB64) {
+    console.warn("No user data or role found. Redirecting to login...");
+    window.location.href = "/login-reg";
+    return;
+  }
+
+  try {
+    const role = atob(storedRoleB64);
+    if (role !== "Head") {
+      window.location.href = "/login-reg";
+    }
+  } catch {
+    window.location.href = "/login-reg";
+  }
+}, []);
 
   // Update totalUnread when calculatedTotalUnread changes
   useEffect(() => {
@@ -1013,11 +1032,11 @@ const IconChat = () => (
               <div
                 className={`${textColor} font-normal flex justify-center w-[30%] ${textSize} -tracking-[0.02rem]`}
               >
-                Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric"
-                })}
+               Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
               </div>
               <div
   className={`${textColor} w-[20%] ${textSize} flex flex-col items-center justify-center`}

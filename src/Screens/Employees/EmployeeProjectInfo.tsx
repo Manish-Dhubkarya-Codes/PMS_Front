@@ -106,6 +106,7 @@ const [isRequesting, setIsRequesting] = useState(false);  // ← for Request but
   const { item } = location.state || {};
   const userData = atob(localStorage.getItem("userData") || "");
   const employeeData = JSON.parse(userData);
+  console.log('test',employeeData)
   const { socket, connected } = useSocket();
   const [updatesList, setUpdatesList] = useState<UpdateItem[]>([]);
   const [isUpdatesLoading, setIsUpdatesLoading] = useState(true);
@@ -692,7 +693,7 @@ if (tlMonitorChats.monitoraudios && i < tlMonitorChats.monitoraudios.length) {
     yesterday.setDate(yesterday.getDate() - 1);
     if (date.toDateString() === today.toDateString()) return "Today";
     if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-    return date.toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" });
+    return date.toLocaleDateString("en-GB");
   };
   const handleRequest = async () => {
     if (requestStatus) return;
@@ -772,6 +773,7 @@ if (tlMonitorChats.monitoraudios && i < tlMonitorChats.monitoraudios.length) {
           msgData: message,
           timestamp,
           senderId,
+          senderName: employeeData.employeeName, 
           tempId,
           replyTo: replyToMessage || null,
         });
@@ -806,6 +808,8 @@ if (tlMonitorChats.monitoraudios && i < tlMonitorChats.monitoraudios.length) {
               msgData: { name: file.name, url, type: file.type || "audio/mp3" },
               timestamp,
               senderId,
+              senderName: employeeData.employeeName,
+              senderPic: employeeData.employeePic,
               tempId,
               replyTo: replyToMessage || null,
             });

@@ -145,11 +145,16 @@ const TeamLeaderProjectInfo: React.FC = () => {
   const location = useLocation();
   const { item } = location.state || {};
   const storedUserData = localStorage.getItem("userData");
-    const isCompleted = projectDetails?.status === "Completed";
-  const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
-  const designation = parsedData.employeeDesignation;
-        const deptMatch = designation.match(/\(([^)]+)\)$/);
-        const dept = deptMatch ? deptMatch[1].trim() : null;
+const isCompleted = projectDetails?.status === "Completed";
+const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
+if (!parsedData) {
+  // Optional: redirect to login if you want
+  // navigate("/login");
+  return null; // or show nothing
+}
+const designation = parsedData?.employeeDesignation || "";
+const deptMatch = designation.match(/\(([^)]+)\)$/);
+const dept = deptMatch ? deptMatch[1].trim() : null;
   // const storedUserRole = localStorage.getItem("role") ? atob(localStorage.getItem("role")!) : "";
   const [width, setWidth] = useState(window.innerWidth);
   const [searchQuery, setSearchQuery] = useState("");
@@ -226,7 +231,7 @@ const forwardFiles = async (timestamps: string[]) => {
   if (!projectDetails?.project_id || !socket || !connected) return;
 
   const projId = projectDetails.project_id;
-  const teamleaderid = parsedData?.employeeId;
+  const teamleaderid = parsedData?.employeeId || "";
 
   let forwardedCount = 0;
 
@@ -1109,11 +1114,11 @@ const scrollToBottom = () => {
     } else if (date.toDateString() === yesterday.toDateString()) {
       return "Yesterday";
     } else {
-      return date.toLocaleDateString("en-CA", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
+      return date.toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
     }
   };
 
@@ -1876,10 +1881,10 @@ const handleSendMessage = async (
           <div className={`${is2XL ? "text-sm" : "text-xs"}`}>
             Submission Date: <span className="">
               {new Date(projectDetails?.deadline ?? "").toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric"
-                })}
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
             </span>
           </div>
           {projectDetails?.assignedEmployees && (
@@ -1992,7 +1997,7 @@ const handleSendMessage = async (
     <div className="flex items-center gap-x-1 text-gray-500">
       <RiTimeLine size={15} color="#FF0A78" />
       <span className="font-semibold text-gray-800">
-        {new Date(projectDetails?.deadline || "").toLocaleDateString("en-CA")}
+        {new Date(projectDetails?.deadline || "").toLocaleDateString("en-GA")}
       </span>
     </div>
   </div>

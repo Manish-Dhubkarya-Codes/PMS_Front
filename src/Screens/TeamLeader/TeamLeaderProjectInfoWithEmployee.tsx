@@ -502,7 +502,10 @@ useEffect(() => {
     const tlName =
       tlMonitorChats?.teamleadername ||
       parsedData?.employeeName;
-    const receiverName = tlMonitorChats?.monitorname;
+    const receiverName =
+  chatMessages.find(
+    m => !m.fromTL && m.senderName?.trim()
+  )?.senderName || "Employee";
     const receiverRole = "Monitor"; // Or "Employee" if you want to detect solo, but using "Monitor" for receiver
     if (msg.seen_by.includes("tl")) {
       text += `Team Leader (${tlName})`;
@@ -570,11 +573,7 @@ const scrollToBottom = () => {
     } else if (date.toDateString() === yesterday.toDateString()) {
       return "Yesterday";
     } else {
-      return date.toLocaleDateString("en-CA", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
+      return date.toLocaleDateString("en-GB");
     }
   };
 
@@ -622,6 +621,7 @@ const handleSendMessage = async (
           msgData: message,
           timestamp,
           senderId,
+          senderName: parsedData?.employeeName,
           tempId,
           replyTo: replyToMessage || null,
         });
@@ -1382,10 +1382,10 @@ const isChatDisabled = isCompleted;
                 Submission Date:{" "}
                 <span className="">
                   {new Date(projectDetails?.deadline ?? "").toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric"
-                })}
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+})}
                   
                 </span>
               </div>
@@ -1495,7 +1495,7 @@ const isChatDisabled = isCompleted;
                         <div className="flex items-center gap-x-1 text-gray-500">
                           <RiTimeLine size={15} color="#FF0A78" />
                           <span className="font-semibold text-gray-800">
-                            {new Date(projectDetails?.deadline || "").toLocaleDateString("en-CA")}
+                            {new Date(projectDetails?.deadline || "").toLocaleDateString("en-GA")}
                           </span>
                         </div>
                       </div>
