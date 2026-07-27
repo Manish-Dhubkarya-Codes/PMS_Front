@@ -9,7 +9,7 @@ interface UseSocketReturn {
   connected: boolean;
 }
 
-export const useSocket = (serverUrl = 'http://localhost:3000'): UseSocketReturn => {
+export const useSocket = (serverUrl = import.meta.env.VITE_API_URL): UseSocketReturn => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
   const callbacksRef = useRef<Map<string, any>>(new Map());
