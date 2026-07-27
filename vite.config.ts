@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc'
 
 
- const url = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000';
+ const url = 'https://api.cognicodeedutech.com';
 
 export default defineConfig({
   plugins: [react(), tailwindcss(),],
