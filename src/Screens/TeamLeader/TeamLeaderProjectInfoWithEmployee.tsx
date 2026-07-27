@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import Button1 from "../../UI_Components/Buttons/Button1";
 import MainNavigation from "../../UI_Components/Navigations/MainNavigation";
@@ -33,7 +33,8 @@ import notificationSound from "../../assets/CredientialAssets/Chat_Notification_
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 import { Commet } from "react-loading-indicators";
-import { MdOutlineDoubleArrow, MdOutlineReply } from "react-icons/md";
+import { MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply, MdBlock } from "react-icons/md";
+import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 
 interface ChatMessage {
@@ -47,10 +48,14 @@ interface ChatMessage {
   seen_by: string[];
   id?: any;
   tempId?: string; // For optimistic updates
-  replyTo?: ReplyMessage | null; // NEW: Added for reply context
-  senderName?: string;   // ← NEW
+  replyTo?: ReplyMessage | null;
+  senderName?: string;
   senderPic?: string;
   senderId?: string;
+  edited?: boolean;
+  editedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 interface ReplyMessage {
@@ -141,7 +146,84 @@ const toggleFileSelect = (timestamp: string) => {
     return next;
   });
 };
+
+
+const handleEditMessage = (msg: ChatMessage) => {
+  if (msg.type !== "text") return;
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 2500);
+    setMessageMenuIndex(null);
+    return;
+  }
+  setEditingMessage(msg);
+  setNewMessage(msg.message || "");
+  inputRef.current?.focus();
+  setMessageMenuIndex(null);
+};
+
+const sendEditedMessage = () => {
+  if (!editingMessage || !projectDetails?.project_id || !socket || !connected) return;
+
+  const editedAt = new Date().toISOString();
+
+  setChatMessages(prev =>
+    prev.map(m =>
+      m.timestamp === editingMessage.timestamp
+        ? { ...m, message: newMessage.trim(), edited: true, editedAt }
+        : m
+    )
+  );
+
+  socket.emit("editTLMonitorMessage", {
+    projectId: projectDetails.project_id,
+    index: editingMessage.id,
+    newData: newMessage.trim(),
+    timestamp: editingMessage.timestamp,
+    fromTL: true,
+  });
+
+  setEditingMessage(null);
+  setNewMessage("");
+};
+
+const handleDeleteMessage = (msg: ChatMessage) => {
+  if (!projectDetails?.project_id || !socket || !connected) return;
+  setMessageMenuIndex(null);
+
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 2500);
+    return;
+  }
+
+  setChatMessages(prev =>
+    prev.map(m =>
+      m.timestamp === msg.timestamp
+        ? { ...m, isDeleted: true, deletedAt: new Date().toISOString(), message: undefined, file: undefined }
+        : m
+    )
+  );
+
+  socket.emit("deleteTLMonitorMessage", {
+    projectId: projectDetails.project_id,
+    index: msg.id,
+    timestamp: msg.timestamp,
+    fromTL: true,
+  });
+};
+
 const isCompleted = projectDetails?.status === "Completed";
+const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
+const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
+const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
+
+const isWithinEditWindow = (msg: ChatMessage): boolean => {
+  if (!msg.timestamp) return false;
+  return Date.now() - new Date(msg.timestamp).getTime() < 2 * 60 * 1000;
+};
+
 const forwardFiles = async (timestamps: string[]) => {
   if (!projectDetails?.project_id || !parsedData?.employeeId) return;
 
@@ -289,7 +371,8 @@ useEffect(() => {
     }
   };
 
-  const fetchTlMonitorChats = async () => {
+  const fetchTlMonitorChats = useCallback(async () => {
+    if (!item?.project_id) return;
     try {
       const response = await getData(
         `clientproject/get_tl_monitor_chats/${item.project_id}`
@@ -300,7 +383,106 @@ useEffect(() => {
     } catch (error) {
       console.error("Error fetching TL-Monitor chats:", error);
     }
+  }, [item?.project_id]);
+
+useEffect(() => {
+  if (!tlMonitorChats) return;
+
+  const allMessages: ChatMessage[] = [];
+
+  const processArray = (arr: any[] | undefined, isFromTL: boolean) => {
+    if (!arr) return;
+
+    let list = arr;
+    if (typeof arr === "string") {
+      try {
+        list = JSON.parse(arr);
+      } catch {
+        return;
+      }
+    }
+    if (!Array.isArray(list)) return;
+
+    list.forEach((str, index) => {
+      try {
+        const parsed = typeof str === "string" ? JSON.parse(str) : str;
+
+        const msg: ChatMessage = {
+          type: parsed.type === "text" ? "text" : "file",
+          isLeft: !isFromTL,
+          fromTL: isFromTL,
+          timestamp: parsed.timestamp,
+          seen_by: parsed.seen_by || [],
+          id: isFromTL ? `tl-${index}` : `emp-${index}`,
+          replyTo: parsed.replyTo || null,
+          senderId: parsed.senderId,
+          senderName:
+            parsed.senderName ||
+            (isFromTL ? tlMonitorChats.teamleadername : tlMonitorChats.monitorname) ||
+            "Unknown",
+          senderPic:
+            parsed.senderPic ||
+            (isFromTL ? tlMonitorChats.teamleaderpic : tlMonitorChats.monitorpic) ||
+            "",
+          edited: !!parsed.edited,          // force boolean
+          editedAt: parsed.editedAt || undefined,
+          isDeleted: !!parsed.isDeleted,    // force boolean
+          deletedAt: parsed.deletedAt || undefined,
+        };
+
+        if (parsed.type === "text") {
+          msg.message = parsed.isDeleted ? undefined : parsed.data;
+        } else if (parsed.data) {
+          msg.file = parsed.isDeleted
+            ? undefined
+            : {
+                name: parsed.data.name,
+                url: `${serverURL}${parsed.data.url}`,
+                type: parsed.data.type,
+              };
+        }
+
+        allMessages.push(msg);
+      } catch (err) {
+        console.error("parse error", err);
+      }
+    });
   };
+
+  processArray(tlMonitorChats.tlchats, true);
+  processArray(tlMonitorChats.tlaudios, true);
+  processArray(tlMonitorChats.monitorchats, false);
+  processArray(tlMonitorChats.monitoraudios, false);
+
+  allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  // Keep any live flags that already exist
+  setChatMessages((prev) => {
+    if (prev.length === 0) return allMessages; // first load
+
+    return allMessages.map((newMsg) => {
+      const existing = prev.find(
+        (m) =>
+          Math.abs(
+            new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()
+          ) < 3000
+      );
+
+      if (existing && (existing.edited || existing.isDeleted)) {
+        return {
+          ...newMsg,
+          edited: true,
+          editedAt: existing.editedAt || newMsg.editedAt,
+          isDeleted: existing.isDeleted || newMsg.isDeleted,
+          deletedAt: existing.deletedAt || newMsg.deletedAt,
+          message: newMsg.isDeleted ? undefined : newMsg.message,
+          file: newMsg.isDeleted ? undefined : newMsg.file,
+        };
+      }
+      return newMsg;
+    });
+  });
+}, [tlMonitorChats]);
 
   useEffect(() => {
     if (item?.project_id) {
@@ -318,76 +500,134 @@ useEffect(() => {
     }
   }, [socket, connected, projectDetails?.project_id]);
 
+
+
 useEffect(() => {
   if (!socket) return;
 
-  const handler = (data: { fromRole: string; msg: any }) => {
-    console.log("🔥 SOCKET FULL DATA:", data);
-    console.log("🔥 INCOMING MSG:", data.msg);
-    console.log("🔥 SENDER NAME:", data.msg?.senderName);
+  const handleNewMessage = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+    if (data.projectId && String(data.projectId) !== String(projectDetails?.project_id)) return;
 
     const { fromRole, msg: incoming } = data;
 
     setChatMessages((prev) => {
-      const isDuplicate = prev.some((m) =>
-        m.timestamp === incoming.timestamp &&
-        ((m.type === "text" && m.message === incoming.data) ||
-         (m.type === "file" && m.file?.name === incoming.data.name))
+      const isDuplicate = prev.some(
+        (m) =>
+          m.timestamp === incoming.timestamp &&
+          ((m.type === "text" && m.message === incoming.data) ||
+            (m.type === "file" && m.file?.name === incoming.data?.name))
       );
       if (isDuplicate) return prev;
 
       const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
-
       if (existingIndex !== -1) {
         const updated = [...prev];
         updated[existingIndex] = {
           ...updated[existingIndex],
           id: incoming.id,
-          tempId: incoming.tempId,
+          tempId: undefined,
         };
         return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      } else {
-        const fromTL = fromRole === "tl";
-        const viewerRole = storedUserRole === "Team Leader" ? "tl" : "monitor";
-        const isLeft = fromRole !== viewerRole;
-
-        const newMsg: ChatMessage = {
-          type: incoming.type === "text" ? "text" : "file",
-          isLeft,
-          fromTL,
-          timestamp: incoming.timestamp,
-          seen_by: incoming.seen_by || [],
-          id: incoming.id,
-          replyTo: incoming.replyTo || null,
-          senderName: incoming.senderName,
-          senderPic: incoming.senderPic,
-        };
-
-        if (incoming.type === "text") {
-          newMsg.message = incoming.data;
-        } else {
-          newMsg.file = {
-            name: incoming.data.name,
-            url: `${serverURL}${incoming.data.url}`,
-            type: incoming.data.type,
-          };
-        }
-
-        return [...prev, newMsg].sort((a, b) =>
-          a.timestamp.localeCompare(b.timestamp)
-        );
       }
+
+      const fromTL = fromRole === "tl";
+      const isLeft = fromRole !== "tl"; // employee → left side for Team Leader
+
+      const newMsg: ChatMessage = {
+        type: incoming.type === "text" ? "text" : "file",
+        isLeft,
+        fromTL,
+        timestamp: incoming.timestamp,
+        seen_by: incoming.seen_by || [],
+        id: incoming.id,
+        replyTo: incoming.replyTo || null,
+        senderName: incoming.senderName,
+        senderPic: incoming.senderPic,
+        senderId: incoming.senderId,
+      };
+
+      if (incoming.type === "text") {
+        newMsg.message = incoming.data;
+      } else {
+        newMsg.file = {
+          name: incoming.data.name,
+          url: `${serverURL}${incoming.data.url}`,
+          type: incoming.data.type,
+        };
+      }
+
+      return [...prev, newMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     });
 
     playNotification();
   };
 
-  socket.on("newTLMonitorMessage", handler);
+const handleEdited = (data: any) => {
+  if (String(data.projectId) !== String(projectDetails?.project_id)) return;
+
+  console.log("✏️ TL received EDIT event:", data);
+
+  setChatMessages((prev) =>
+    prev.map((m) => {
+      const timeDiff = Math.abs(
+        new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
+      );
+
+      // Prefer timestamp (very tolerant) — ignore id completely
+      if (timeDiff < 10000) {
+        return {
+          ...m,
+          message: data.newData,
+          edited: true,
+          editedAt: data.editedAt || new Date().toISOString(),
+        };
+      }
+      return m;
+    })
+  );
+};
+
+const handleDeleted = (data: any) => {
+  if (String(data.projectId) !== String(projectDetails?.project_id)) return;
+
+  console.log("🗑️ TL received DELETE event:", data);
+
+  setChatMessages((prev) =>
+    prev.map((m) => {
+      const timeDiff = Math.abs(
+        new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
+      );
+
+      if (timeDiff < 10000) {
+        return {
+          ...m,
+          isDeleted: true,
+          deletedAt: data.deletedAt || new Date().toISOString(),
+          message: undefined,
+          file: undefined,
+        };
+      }
+      return m;
+    })
+  );
+};
+const handleProjectStatusUpdated = (data: { projectId: string | number; status: string }) => {
+  if (String(data.projectId) !== String(projectDetails?.project_id)) return;
+  setProjectDetails((prev) => (prev ? { ...prev, status: data.status } : prev));
+};
+
+  socket.on("newTLMonitorMessage", handleNewMessage);
+  socket.on("tlMonitorMessageEdited", handleEdited);
+  socket.on("tlMonitorMessageDeleted", handleDeleted);
+  socket.on("projectStatusUpdated", handleProjectStatusUpdated);
 
   return () => {
-    socket.off("newTLMonitorMessage", handler);
+    socket.off("newTLMonitorMessage", handleNewMessage);
+    socket.off("tlMonitorMessageEdited", handleEdited);
+    socket.off("tlMonitorMessageDeleted", handleDeleted);
+    socket.off("projectStatusUpdated", handleProjectStatusUpdated);
   };
-}, [socket, storedUserRole]);
+}, [socket, projectDetails?.project_id, storedUserRole, playNotification]);
 
   useEffect(() => {
     observer.current = new IntersectionObserver(
@@ -421,15 +661,15 @@ useEffect(() => {
   }, [chatMessages, projectDetails?.project_id,socket, onEvent]);
 
   // thisss
-  useEffect(() => {
-  const handleVisibility = () => {
-    if (document.visibilityState === 'visible') {
-      fetchTlMonitorChats(); // Or fetchProject(true);
-    }
-  };
-  document.addEventListener('visibilitychange', handleVisibility);
-  return () => document.removeEventListener('visibilitychange', handleVisibility);
-}, [fetchTlMonitorChats]);
+//   useEffect(() => {
+//   const handleVisibility = () => {
+//     if (document.visibilityState === 'visible') {
+//       fetchTlMonitorChats(); // Or fetchProject(true);
+//     }
+//   };
+//   document.addEventListener('visibilitychange', handleVisibility);
+//   return () => document.removeEventListener('visibilitychange', handleVisibility);
+// }, [fetchTlMonitorChats]);
 
   useEffect(() => {
     const currentObserver = observer.current;
@@ -958,257 +1198,6 @@ const handleSendMessage = async (
     }
   };
 
-useEffect(() => {
-  if (!tlMonitorChats || !projectDetails) return;
-
-  let allMessages: ChatMessage[] = [];
-
-  const maxLengthTL = Math.max(
-    tlMonitorChats.tlchats?.length || 0,
-    tlMonitorChats.tlaudios?.length || 0
-  );
-  const maxLengthMonitor = Math.max(
-    tlMonitorChats.monitorchats?.length || 0,
-    tlMonitorChats.monitoraudios?.length || 0
-  );
-  const maxLength = Math.max(maxLengthTL, maxLengthMonitor);
-
-  for (let i = 0; i < maxLength; i++) {
-    // ====================== TL MESSAGES ======================
-    if (i < (tlMonitorChats.tlchats?.length || 0)) {
-      const chatStr = tlMonitorChats.tlchats?.[i];
-      if (typeof chatStr === "string") {
-        try {
-          const parsed = JSON.parse(chatStr);
-          let timestamp = parsed.timestamp;
-          if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-            timestamp = new Date().toISOString();
-          }
-
-          const msg: ChatMessage = {
-            type: parsed.type === "text" ? "text" : "file",
-            isLeft: storedUserRole !== "Team Leader",
-            fromTL: true,
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            replyTo: parsed.replyTo || null,
-            senderId: parsed.senderId || tlMonitorChats?.teamleaderid?.toString() || parsedData?.employeeId?.toString() || "",
-senderName: parsed.senderName || tlMonitorChats?.teamleadername,
-senderPic: parsed.senderPic || tlMonitorChats?.teamleaderpic || "",
-          };
-
-          if (parsed.type === "text") {
-            msg.message = parsed.data;
-          } else {
-            msg.file = {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            };
-          }
-
-          allMessages.push(msg);
-        } catch (e) {
-          console.error("Error parsing TL chat:", e);
-        }
-      }
-    }
-
-    // ====================== TL AUDIOS ======================
-    if (tlMonitorChats.tlaudios && i < tlMonitorChats.tlaudios.length) {
-      const audioStr = tlMonitorChats.tlaudios[i];
-      try {
-        const parsed = JSON.parse(audioStr);
-        let timestamp = parsed.timestamp;
-        if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-          timestamp = new Date().toISOString();
-        }
-
-        const msg: ChatMessage = {
-          type: "file",
-          isLeft: storedUserRole !== "Team Leader",
-          fromTL: true,
-          file: {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
-          },
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          replyTo: parsed.replyTo || null,
-          senderId: parsed.senderId || tlMonitorChats?.teamleaderid?.toString() || parsedData?.employeeId?.toString() || "",
-senderName: parsed.senderName || tlMonitorChats?.teamleadername,
-senderPic: parsed.senderPic || tlMonitorChats?.teamleaderpic || "",
-        };
-
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing TL audio:", e);
-      }
-    }
-
-if (tlMonitorChats.monitorchats && i < tlMonitorChats.monitorchats.length) {
-  const chatStr = tlMonitorChats.monitorchats[i];
-  try {
-    const parsed = JSON.parse(chatStr);
-    let timestamp = parsed.timestamp || new Date().toISOString();
-    
-    console.log("🔥 TL - PARSED MONITOR CHAT SENDER NAME:", parsed.senderName);
-
-    const msg: ChatMessage = {
-      type: parsed.type === "text" ? "text" : "file",
-      isLeft: storedUserRole === "Team Leader",
-      fromTL: false,
-      timestamp,
-      seen_by: parsed.seen_by || [],
-      id: i,
-      replyTo: parsed.replyTo || null,
-      senderName: parsed.senderName || tlMonitorChats?.monitorname || "Employee",
-      senderId: parsed.senderId || tlMonitorChats?.monitorid?.toString() || "",
-      senderPic: parsed.senderPic || "",
-    };
-    if (parsed.type === "text") {
-      msg.message = parsed.data;
-    } else {
-      msg.file = {
-        name: parsed.data.name,
-        url: `${serverURL}${parsed.data.url}`,
-        type: parsed.data.type,
-      };
-    }
-    allMessages.push(msg);
-  } catch (e) {
-    console.error("Error parsing Monitor chat:", e);
-  }
-}
-
-    // ====================== MONITOR AUDIOS (STRICT) ======================
-    if (tlMonitorChats.monitoraudios && i < tlMonitorChats.monitoraudios.length) {
-      const audioStr = tlMonitorChats.monitoraudios[i];
-      try {
-        const parsed = JSON.parse(audioStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
-
-        const msg: ChatMessage = {
-          type: "file",
-          isLeft: storedUserRole === "Team Leader",
-          fromTL: false,
-          file: {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
-          },
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          replyTo: parsed.replyTo || null,
-
-         senderName: parsed.senderName || tlMonitorChats?.monitorname || "Employee",
-      senderId: parsed.senderId || tlMonitorChats?.monitorid?.toString() || "",
-      senderPic: parsed.senderPic || "",
-        };
-
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing Monitor audio:", e);
-      }
-    }
-  }
-
-  // ====================== CLIENT UPDATES (UNCHANGED) ======================
-  let updateMessages: ChatMessage[] = [];
-
-  if (projectDetails?.clientchats) {
-    projectDetails.clientchats.forEach((chatStr, i) => {
-      if (typeof chatStr === "string") {
-        try {
-          const parsed = JSON.parse(chatStr);
-          const isUpdate =
-            (parsed.type === "text" &&
-              parsed.data.startsWith("@update_")) ||
-            (parsed.type === "file" &&
-              parsed.data.name?.startsWith("@update_"));
-
-          if (isUpdate) {
-            let timestamp = parsed.timestamp;
-            if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-              timestamp = new Date().toISOString();
-            }
-
-            const msg: ChatMessage = {
-              type: parsed.type === "text" ? "text" : "file",
-              isLeft: true,
-              fromTL: false,
-              fromClient: true,
-              timestamp,
-              seen_by: [],
-              id: `client_${i}`,
-            };
-
-            if (parsed.type === "text") {
-              msg.message = parsed.data;
-            } else {
-              msg.file = {
-                name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
-                type: parsed.data.type,
-              };
-            }
-
-            updateMessages.push(msg);
-          }
-        } catch (e) {
-          console.error("Error parsing client chat for updates:", e);
-        }
-      }
-    });
-  }
-
-  if (projectDetails?.clientaudios) {
-    projectDetails.clientaudios.forEach((audioStr, i) => {
-      if (typeof audioStr === "string") {
-        try {
-          const parsed = JSON.parse(audioStr);
-          const isUpdate = parsed.data.name?.startsWith("@update_");
-
-          if (isUpdate) {
-            let timestamp = parsed.timestamp;
-            if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-              timestamp = new Date().toISOString();
-            }
-
-            const msg: ChatMessage = {
-              type: "file",
-              isLeft: true,
-              fromTL: false,
-              fromClient: true,
-              file: {
-                name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
-                type: parsed.data.type,
-              },
-              timestamp,
-              seen_by: [],
-              id: `client_audio_${i}`,
-            };
-
-            updateMessages.push(msg);
-          }
-        } catch (e) {
-          console.error("Error parsing client audio for updates:", e);
-        }
-      }
-    });
-  }
-
-  allMessages = [...allMessages, ...updateMessages].sort((a, b) =>
-    a.timestamp.localeCompare(b.timestamp)
-  );
-
-  setChatMessages(allMessages);
-}, [tlMonitorChats, projectDetails, serverURL, storedUserRole]);
 
     const ActionBar = ({ msg, url, name }: any) => (
       <div
@@ -1269,7 +1258,6 @@ const getSenderInfo = (msg: ChatMessage) => {
   const isLG = width > 1024 && width <= 1280;
   const isXL = width > 1280 && width <= 1536;
   const is2XL = width > 1536;
-const isChatDisabled = isCompleted;
   const highlightMessageText = (text: string) => {
   if (!text) return text;
 
@@ -1515,7 +1503,7 @@ const isChatDisabled = isCompleted;
 </div>
 <div
   className={`w-full md:min-h-[400px] min-h-[300px] md:max-h-[650px] max-h-[550px] flex flex-col items-center justify-between pb-4 
-  ${isCompleted ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}
+  ${isChatDisabled ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}
   ring-1 ring-inset ring-cyan-100/50
   text-slate-500 shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)] shadow-[#8A8A8A] rounded-[10px]`}
 >
@@ -1523,7 +1511,7 @@ const isChatDisabled = isCompleted;
   <div
     className="flex items-center w-fit rounded-md justify-center text-white"
     style={{
-    background: isCompleted
+    background: isCompleted || isChatDisabled
       ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
       : currentTab === "chat"
       ? "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
@@ -1602,7 +1590,7 @@ const isChatDisabled = isCompleted;
         }
         const sender = getSenderInfo(msg);
         return (
-          <React.Fragment key={index}>
+          <React.Fragment key={`${msg.timestamp}-${msg.id || index}`}>
             {dateHeader}
             <div
             ref={(el) => {
@@ -1700,277 +1688,178 @@ const isChatDisabled = isCompleted;
 `}
                   >
                     {msg.replyTo && (
-  <div
-    onClick={() => handleClickOnReplyBubble(msg.replyTo!)}
-    className="mb-2 p-2 bg-[#ececec] rounded-md border-l-4 border-blue-500 cursor-pointer hover:bg-gray-200 transition"
-  >
-    <div className="text-xs font-medium text-gray-600">
-      {/* ✅ FIXED: Proper reply sender display */}
-      {(() => {
-        const replySenderRole = msg.replyTo!.sender;
-        const isCurrentUserTL = storedUserRole === "Team Leader";
-        
-        if (replySenderRole.includes("You")) return replySenderRole;
-        if (replySenderRole.includes("Team Leader") && isCurrentUserTL) return "You";
-        if (replySenderRole.includes("Monitor") || replySenderRole.includes("Employee")) return "You";
-        
-        return replySenderRole;
-      })()}
-    </div>
-    <div className="text-xs text-gray-500 truncate">
-      {msg.replyTo.content}
-    </div>
-  </div>
-)}
-                    {msg.message && msg.type === "text" && (
-                     <div
-          className="text-gray-900 leading-snug break-words hyphens-auto"
-          dangerouslySetInnerHTML={{
-            __html: DOMPurify.sanitize(
-              highlightMessageText(
-                msg.message,
-              )
-            ),
-          }}
-                    />)}
-                    
-                    {msg.file &&
-                      msg.file.url &&
-                      msg.file.name && (
-                        <div className="relative">
-                          {isFileSelectionMode && (
-                            <input
-                              type="checkbox"
-                              checked={selectedFileTimestamps.has(msg.timestamp)}
-                              onChange={() => toggleFileSelect(msg.timestamp)}
-                              className={`absolute top-[13.3px] left-[16.5px] z-20 w-7 h-7 rounded-[10px] border-2 border-blue-500 bg-white/90 checked:bg-blue-600`}
-                            />
-                          )}
+                      <div
+                        onClick={() => handleClickOnReplyBubble(msg.replyTo!)}
+                        className="mb-2 p-2 bg-[#ececec] rounded-md border-l-4 border-blue-500 cursor-pointer hover:bg-gray-200 transition"
+                      >
+                        <div className="text-xs font-medium text-gray-600">
+                          {(() => {
+                            const replySenderRole = msg.replyTo!.sender;
+                            const isCurrentUserTL = storedUserRole === "Team Leader";
+                            if (replySenderRole.includes("You")) return replySenderRole;
+                            if (replySenderRole.includes("Team Leader") && isCurrentUserTL) return "You";
+                            if (replySenderRole.includes("Monitor") || replySenderRole.includes("Employee")) return "You";
+                            return replySenderRole;
+                          })()}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {msg.replyTo.content}
+                        </div>
+                      </div>
+                    )}
+
+                    {msg.isDeleted ? (
+                      <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+                        <MdBlock size={14} /> {msg.isLeft ? "This message was deleted" : "You deleted this message"}
+                      </div>
+                    ) : (
+                      <>
+                        {msg.message && msg.type === "text" && (
                           <div
-                            ref={
-                              index === msgControl
-                                ? divRef
-                                : null
-                            }
-                            onClick={() =>
-                              setMsgControl(
-                                msgControl === index
-                                  ? null
-                                  : index
-                              )
-                            }
-className="
-  group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden
-  rounded-xl border border-slate-200 bg-white
-  transition-all duration-300 ease-out
-  hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)]
-  active:scale-[0.985]
-"                          >
-                                                         {/* HEADER */}
-                                                         <div className="flex items-center gap-3 px-3 py-2">
-                                                           {(() => {
-                                                             const fileType = msg.file.type;
-                                                             let Icon = FaFileInvoice;
-                                                             let color = "text-slate-600";
-                             
-                                                             if (fileType.startsWith("audio/")) {
-                                                               Icon = FaFileAudio;
-                                                               color = "text-orange-500";
-                                                             } else if (
-                                                               fileType.startsWith("image/")
-                                                             ) {
-                                                               Icon = FaFileImage;
-                                                               color = "text-emerald-500";
-                                                             } else if (
-                                                               fileType.startsWith("video/")
-                                                             ) {
-                                                               Icon = FaFileVideo;
-                                                               color = "text-violet-500";
-                                                             } else if (
-                                                               fileType === "application/pdf"
-                                                             ) {
-                                                               Icon = FaFilePdf;
-                                                               color = "text-rose-500";
-                                                             } else if (
-                                                               fileType === "application/msword" ||
-                                                               fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                                             ) {
-                                                               Icon = FaFileWord;
-                                                               color = "text-sky-600";
-                                                             } else if (
-                                                               fileType === "application/zip"
-                                                             ) {
-                                                               Icon = FaFileArchive;
-                                                               color = "text-amber-500";
-                                                             } else if (fileType === "text/html") {
-                                                               Icon = FaRegFileAlt;
-                                                               color = "text-amber-500";
-                                                             }
-                             
-                                                             return (
-                                                               <div
-                                                                 className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}
-                                                               >
-                                                                 <Icon size={18} />
-                                                               </div>
-                                                             );
-                                                           })()}
-                             
-                                                           <div className="flex-1 min-w-0">
-                                                             <p className="truncate text-[13px] font-medium text-slate-800">
-                                                               {msg.file.name}
-                                                             </p>
-                                                             <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                                                               {getReadableFileType(
-                                                                             msg.file.type
-                                                               )} 
-                                                             </p>
-                                                           </div>
-                                                         </div>
-                              
+                            className="text-gray-900 leading-snug break-words hyphens-auto"
+                            dangerouslySetInnerHTML={{
+                              __html: DOMPurify.sanitize(highlightMessageText(msg.message)),
+                            }}
+                          />
+                        )}
+
+                        {msg.file && msg.file.url && msg.file.name && (
+                          <div className="relative">
+                            {isFileSelectionMode && (
+                              <input
+                                type="checkbox"
+                                checked={selectedFileTimestamps.has(msg.timestamp)}
+                                onChange={() => toggleFileSelect(msg.timestamp)}
+                                className="absolute top-[13.3px] left-[16.5px] z-20 w-7 h-7 rounded-[10px] border-2 border-blue-500 bg-white/90 checked:bg-blue-600"
+                              />
+                            )}
+                            <div
+                              ref={index === msgControl ? divRef : null}
+                              onClick={() => setMsgControl(msgControl === index ? null : index)}
+                              className="group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985]"
+                            >
+                              <div className="flex items-center gap-3 px-3 py-2">
+                                {(() => {
+                                  const fileType = msg.file.type;
+                                  let Icon = FaFileInvoice;
+                                  let color = "text-slate-600";
+
+                                  if (fileType.startsWith("audio/")) { Icon = FaFileAudio; color = "text-orange-500"; }
+                                  else if (fileType.startsWith("image/")) { Icon = FaFileImage; color = "text-emerald-500"; }
+                                  else if (fileType.startsWith("video/")) { Icon = FaFileVideo; color = "text-violet-500"; }
+                                  else if (fileType === "application/pdf") { Icon = FaFilePdf; color = "text-rose-500"; }
+                                  else if (fileType === "application/msword" || fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") { Icon = FaFileWord; color = "text-sky-600"; }
+                                  else if (fileType === "application/zip") { Icon = FaFileArchive; color = "text-amber-500"; }
+                                  else if (fileType === "text/html") { Icon = FaRegFileAlt; color = "text-amber-500"; }
+
+                                  return (
+                                    <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}>
+                                      <Icon size={18} />
+                                    </div>
+                                  );
+                                })()}
+
+                                <div className="flex-1 min-w-0">
+                                  <p className="truncate text-[13px] font-medium text-slate-800">{msg.file.name}</p>
+                                  <p className="text-[10px] uppercase tracking-wide text-slate-400">{getReadableFileType(msg.file.type)}</p>
+                                </div>
+                              </div>
+
                               {(() => {
                                 const fileType = msg.file.type;
-                                const url =
-                                  msg.file.url.startsWith("blob:")
-                                    ? msg.file.url
-                                    : `${msg.file.url}`;
+                                const url = msg.file.url.startsWith("blob:") ? msg.file.url : `${msg.file.url}`;
                                 const name = msg.file.name;
-                                if (
-                                  fileType.startsWith("audio/")
-                                ) {
+
+                                if (fileType.startsWith("audio/")) {
+                                  return <div className="px-3 py-2 border-t border-gray-200"><audio controls src={url} className="min-w-[150px] max-w-full" /></div>;
+                                } else if (fileType.startsWith("image/")) {
                                   return (
-                                    <div className="px-3 py-2 border-t border-gray-200">
-                                      <audio
-                                        controls
-                                        src={url}
-                                        className="min-w-[150px] max-w-full"
-                                      />
-                                    </div>
-                                  );
-                                } else if (
-                                  fileType.startsWith("image/")
-                                ) {
-                                  return (
-                                    <div
-                                      ref={
-                                        index === msgControl
-                                          ? divRef
-                                          : null
-                                      }
-                                      onClick={() =>
-                                        setMsgControl(
-                                          msgControl === index
-                                            ? null
-                                            : index
-                                        )
-                                      }
-                                      className="px-0 pb-2 relative border-t border-gray-200 h-[100px] flex items-center justify-center"
-                                    >
-                                      <img
-                                        src={url}
-                                        alt={name}
-                                        className="max-h-full max-w-full object-contain"
-                                      />
+                                    <div className="px-0 pb-2 relative border-t border-gray-200 h-[100px] flex items-center justify-center">
+                                      <img src={url} alt={name} className="max-h-full max-w-full object-contain" />
                                       {msgControl === index && (
                                         <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-                            <ActionBar
-                              msg={msg}
-                              index={index}
-                              url={url}
-                              name={name}
-                            />
-                          </div>
+                                          <ActionBar msg={msg} index={index} url={url} name={name} />
+                                        </div>
                                       )}
                                     </div>
                                   );
-                                } else if (
-                                  fileType.startsWith("video/")
-                                ) {
-                                  return (
-                                    <div className="px-0 py-0 border-t border-gray-200">
-                                      <video
-                                        controls
-                                        src={url}
-                                        className="w-full max-h-[100px] object-contain"
-                                      />
-                                    </div>
-                                  );
-                                } else if (
-                                  fileType === "text/html" ||
-                                  fileType ===
-                                    "application/pdf" ||
-                                  fileType ===
-                                    "application/msword" ||
-                                  fileType ===
-                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-                                  fileType === "application/zip"
-                                ) {
-                                  return (
-                                    <div className="px-3  flex items-center justify-center">
-                                      {msgControl === index && (
-                                       <ActionBar
-                              msg={msg}
-                              index={index}
-                              url={url}
-                              name={name}
-                            />
-                                      )}
-                                    </div>
-                                  );
+                                } else if (fileType.startsWith("video/")) {
+                                  return <div className="px-0 py-0 border-t border-gray-200"><video controls src={url} className="w-full max-h-[100px] object-contain" /></div>;
+                                } else if (["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)) {
+                                  return <div className="px-3 flex items-center justify-center">{msgControl === index && <ActionBar msg={msg} index={index} url={url} name={name} />}</div>;
                                 }
                                 return null;
                               })()}
                             </div>
                           </div>
                         )}
-                    <div
-                      className={`text-xs text-gray-500 mt-1 ${
-                        msg.isLeft
-                          ? "text-left"
-                          : "text-right"
-                      }`}
-                    >
-                      {new Date(
-                        msg.timestamp
-                      ).toLocaleTimeString("en-IN")}
-                      {!msg.isLeft && ( // Only on sent messages (right side, from TL)
+                      </>
+                    )}
+
+                    <div className={`text-xs text-gray-500 mt-1 ${msg.isLeft ? "text-left" : "text-right"}`}>
+                      {msg.edited && !msg.isDeleted && (
+                        <span className="text-[10px] text-amber-500 mr-1 italic">edited</span>
+                      )}
+                      {new Date(msg.timestamp).toLocaleTimeString("en-IN")}
+                      {!msg.isLeft && (
                         <span className="inline-flex items-center ml-1">
-                          <IoCheckmarkDoneSharp
-                            size={14}
-                            color={
-                              isSeenByReceiver(msg)
-                                ? "#00B7FF"
-                                : "#000000"
-                            }
-                            className="inline-block"
-                          />
-                          <FaInfoCircle
-                            size={12}
-                            color="#808080"
-                            title={getSeenText(msg)}
-                            className="inline-block ml-1 cursor-help"
-                          />
+                          <IoCheckmarkDoneSharp size={14} color={isSeenByReceiver(msg) ? "#00B7FF" : "#000000"} className="inline-block" />
+                          <FaInfoCircle size={12} color="#808080" title={getSeenText(msg)} className="inline-block ml-1 cursor-help" />
                         </span>
                       )}
                     </div>
+
+                    {!msg.isLeft && !msg.isDeleted && (
+                      <div className="relative flex justify-end mt-1">
+                        <div
+                          className="cursor-pointer p-0.5 rounded-full hover:bg-gray-200 text-gray-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMessageMenuIndex(messageMenuIndex === index ? null : index);
+                          }}
+                        >
+                          <BsThreeDotsVertical size={13} />
+                        </div>
+
+                        {messageMenuIndex === index && (
+                          <div className="absolute bottom-6 right-0 bg-white shadow-xl rounded-xl border border-gray-100 z-50 min-w-[110px] overflow-hidden">
+                            {msg.type === "text" && (
+                              <div
+                                onClick={(e) => { e.stopPropagation(); handleEditMessage(msg); }}
+                                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 cursor-pointer"
+                              >
+                                <MdEdit size={15} className="text-blue-500" /> Edit
+                              </div>
+                            )}
+                            <div
+                              onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg); }}
+                              className="flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 cursor-pointer"
+                            >
+                              <MdDelete size={15} /> Delete
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-                {msg.isLeft && !isCompleted && ( // NEW: Add reply icon for left (received) messages
-<div
-onClick={() => handleReplyToMessage(msg)}
-className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
->
-<MdOutlineReply size={15} />
-</div>
-)}
-{!msg.isLeft && !isCompleted && ( // NEW: Add reply icon for right (sent) messages
-<div
-onClick={() => handleReplyToMessage(msg)}
-className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
->
-<MdOutlineReply className="scale-x-[-1]" size={15} />
-</div>
-)}
+
+                {msg.isLeft && !isCompleted && (
+                  <div
+                    onClick={() => handleReplyToMessage(msg)}
+                    className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
+                  >
+                    <MdOutlineReply size={15} />
+                  </div>
+                )}
+                {!msg.isLeft && !isCompleted && (
+                  <div
+                    onClick={() => handleReplyToMessage(msg)}
+                    className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
+                  >
+                    <MdOutlineReply className="scale-x-[-1]" size={15} />
+                  </div>
+                )}
               </div>
             </div>
             
@@ -2089,8 +1978,14 @@ className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slat
   value={newMessage}
   onChange={(e) => setNewMessage(e.target.value)}
   onKeyDown={handleKeyDown}
-  onSend={handleSendMessage}
-  placeholder="Type your message..."
+  onSend={(message, type, files) => {
+    if (editingMessage) {
+      sendEditedMessage();
+    } else {
+      handleSendMessage(message, type, files);
+    }
+  }}
+  placeholder={editingMessage ? "Edit your message..." : "Type your message..."}
   onPreviewHeightChange={handlePreviewHeightChange}
   inputRef={inputRef}
   replyTo={replyToMessage} // NEW: Pass replyTo prop

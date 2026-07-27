@@ -131,6 +131,7 @@ const HeadClientProjectInfo: React.FC = () => {
   const [replyToMessage, setReplyToMessage] = useState<ReplyMessage | null>(
     null
   );
+  const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
   const descriptionRef = useRef<HTMLDivElement>(null);
@@ -146,6 +147,7 @@ const HeadClientProjectInfo: React.FC = () => {
     null
   );
   const isCompleted = projectDetails?.status === "Completed";
+const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { item: locationItem } = location.state || {};
@@ -183,6 +185,13 @@ const HeadClientProjectInfo: React.FC = () => {
     { title: "", content: "" },
     { title: "", content: "" },
   ]);
+
+  const isWithinEditWindow = (msg: ChatMessage): boolean => {
+  if (!msg.timestamp) return false;
+  const sent = new Date(msg.timestamp).getTime();
+  return Date.now() - sent < 2 * 60 * 1000; // 2 minutes
+};
+
 
   const [progress, setProgress] = useState({ start: 'no', payment: '0%', work: '0%' });
   const localRole = "Head";
@@ -368,62 +377,84 @@ console.log("Project Details:", projectDetails);
   fetchProgress();
 }, [projectDetails]);
 
-  const processUpdates = (messages: ChatMessage[]) => {
-    const tempUpdates: (Omit<UpdateItem, "number"> & {
-      parsedNumber?: number;
-    })[] = [];
-    messages.forEach((msg) => {
-      if (
-        msg.fromClient &&
-        msg.type === "text" &&
-        msg.message?.startsWith("@update_")
-      ) {
-        let title: string;
-        const newMatch = msg.message.match(/@update_([^:]+):(.*)/s);
-        if (newMatch) {
-          title = newMatch[1].trim();
-        } else {
-          return;
-        }
-        tempUpdates.push({
-          title,
-          messageTimestamp: msg.timestamp,
-          isText: true,
-        });
-      } else if (
-        msg.fromClient &&
-        msg.type === "file" &&
-        msg.file?.name.startsWith("@update_")
-      ) {
-        const name = msg.file.name;
-        let title: string;
-        if (name.endsWith(".pdf")) {
-          const safeTitle = name.slice(8, -4);
-          title = safeTitle
-            .split("_")
-            .map((word) => word.charAt(0) + word.slice(1))
-            .join(" ");
-        } else {
-          return;
-        }
-        tempUpdates.push({
-          title,
-          messageTimestamp: msg.timestamp,
-          isText: false,
-        });
-      }
-    });
-    tempUpdates.sort((a, b) =>
-      a.messageTimestamp.localeCompare(b.messageTimestamp)
-    );
-    const updates = tempUpdates.map((upd, index) => ({
-      number: index + 1,
-      title: upd.title,
-      messageTimestamp: upd.messageTimestamp,
-      isText: upd.isText,
-    }));
-    setUpdatesList(updates);
+useEffect(() => {
+  if (!socket) return;
+
+  const handleProjectStatusUpdated = (data: { projectId: string | number; status: string }) => {
+    if (String(data.projectId) !== String(projectDetails?.project_id)) return;
+    setProjectDetails((prev) => (prev ? { ...prev, status: data.status } : prev));
   };
+
+  socket.on("projectStatusUpdated", handleProjectStatusUpdated);
+
+  return () => {
+    socket.off("projectStatusUpdated", handleProjectStatusUpdated);
+  };
+}, [socket, projectDetails?.project_id]);
+
+const processUpdates = (messages: ChatMessage[]) => {
+  const tempUpdates: (Omit<UpdateItem, "number"> & {
+    parsedNumber?: number;
+  })[] = [];
+
+  messages.forEach((msg) => {
+    if (
+      msg.fromClient &&
+      msg.type === "text" &&
+      msg.message?.startsWith("@update_")
+    ) {
+      let title: string;
+      const newMatch = msg.message.match(/@update_([^:]+):(.*)/s);
+      if (newMatch) {
+        title = newMatch[1].trim();
+      } else {
+        return;
+      }
+      tempUpdates.push({
+        title,
+        messageTimestamp: msg.timestamp,
+        isText: true,
+      });
+    } 
+    else if (
+      msg.fromClient &&
+      msg.type === "file" &&
+      msg.file?.name?.startsWith("@update_")   // ← FIXED: Added extra ?
+    ) {
+      const name = msg.file.name;
+      let title: string;
+
+      if (name.endsWith(".pdf")) {
+        const safeTitle = name.slice(8, -4);
+        title = safeTitle
+          .split("_")
+          .map((word) => word.charAt(0) + word.slice(1))
+          .join(" ");
+      } else {
+        return;
+      }
+
+      tempUpdates.push({
+        title,
+        messageTimestamp: msg.timestamp,
+        isText: false,
+      });
+    }
+  });
+
+  tempUpdates.sort((a, b) =>
+    a.messageTimestamp.localeCompare(b.messageTimestamp)
+  );
+
+  const updates = tempUpdates.map((upd, index) => ({
+    number: index + 1,
+    title: upd.title,
+    messageTimestamp: upd.messageTimestamp,
+    isText: upd.isText,
+  }));
+
+  setUpdatesList(updates);
+};
   useEffect(() => {
     processUpdates(chatMessages);
   }, [chatMessages]);
@@ -711,76 +742,93 @@ console.log("Project Details:", projectDetails);
     );
     const maxLength = Math.max(maxLengthClient, maxLengthHead, maxLengthTL);
     for (let i = 0; i < maxLength; i++) {
-      if (i < (projectDetails.clientchats?.length || 0)) {
-        const chatStr = projectDetails.clientchats?.[i];
-        if (typeof chatStr === "string") {
-          try {
-            const parsed = JSON.parse(chatStr);
-            let timestamp = parsed.timestamp;
-            if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-              timestamp = new Date().toISOString();
-            }
-            const msg: ChatMessage = {
-              type: parsed.type === "text" ? "text" : "file",
-              isLeft: true,
-              fromClient: true,
-              fromHead: false,
-              fromTeamLeader: false,
-              timestamp,
-              seen_by: parsed.seen_by || [],
-              id: i,
-              mention: parsed.mention || null,
-              replyTo: parsed.replyTo || null,
-            };
-            if (parsed.type === "text") {
-              msg.message = parsed.data;
-            } else {
-              msg.file = {
-                name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
-                type: parsed.data.type,
-              };
-            }
-            allMessages.push(msg);
-          } catch (e) {
-            console.error("Error parsing client chat:", e);
-          }
+// ================== CLIENT CHATS ==================
+// ================== CLIENT CHATS (FIXED - isDeleted + edited) ==================
+if (i < (projectDetails.clientchats?.length || 0)) {
+  const chatStr = projectDetails.clientchats?.[i];
+  if (typeof chatStr === "string") {
+    try {
+      const parsed = JSON.parse(chatStr);
+      if (parsed.type === "system") continue;
+
+      let timestamp = parsed.timestamp || new Date().toISOString();
+      const isDeleted = parsed.isDeleted === true;
+
+      const msg: ChatMessage = {
+        type: parsed.type === "text" ? "text" : "file",
+        isLeft: true,
+        fromClient: true,
+        fromHead: false,
+        fromTeamLeader: false,
+        timestamp,
+        seen_by: parsed.seen_by || [],
+        id: i,
+        mention: parsed.mention || null,
+        replyTo: parsed.replyTo || null,
+        isDeleted,
+        deletedAt: parsed.deletedAt,
+        edited: parsed.edited || false,
+        editedAt: parsed.editedAt,
+        caption: parsed.caption,
+      };
+
+      if (!isDeleted) {
+        if (parsed.type === "text") {
+          msg.message = parsed.data;
+        } else if (parsed.data) {
+          msg.file = {
+            name: parsed.data.name,
+            url: `${serverURL}${parsed.data.url}`,
+            type: parsed.data.type,
+          };
         }
       }
-      if (
-        projectDetails.clientaudios &&
-        i < projectDetails.clientaudios.length
-      ) {
-        const audioStr = projectDetails.clientaudios[i];
-        try {
-          const parsed = JSON.parse(audioStr);
-          let timestamp = parsed.timestamp;
-          if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-            timestamp = new Date().toISOString();
-          }
-          const msg: ChatMessage = {
-            type: "file",
-            isLeft: true,
-            fromClient: true,
-            fromHead: false,
-            fromTeamLeader: false,
-            file: {
+      allMessages.push(msg);
+    } catch (e) {
+      console.error("Error parsing client chat:", e);
+    }
+  }
+}
+
+// ================== CLIENT AUDIOS (FIXED) ==================
+if (projectDetails.clientaudios && i < projectDetails.clientaudios.length) {
+  const audioStr = projectDetails.clientaudios[i];
+  if (typeof audioStr === "string") {
+    try {
+      const parsed = JSON.parse(audioStr);
+      let timestamp = parsed.timestamp || new Date().toISOString();
+      const isDeleted = parsed.isDeleted === true;
+
+      const msg: ChatMessage = {
+        type: "file",
+        isLeft: true,
+        fromClient: true,
+        fromHead: false,
+        fromTeamLeader: false,
+        timestamp,
+        seen_by: parsed.seen_by || [],
+        id: i,
+        mention: parsed.mention || null,
+        replyTo: parsed.replyTo || null,
+        isDeleted,
+        deletedAt: parsed.deletedAt,
+        edited: parsed.edited || false,
+        editedAt: parsed.editedAt,
+        caption: parsed.caption,
+        file: !isDeleted && parsed.data
+          ? {
               name: parsed.data.name,
               url: `${serverURL}${parsed.data.url}`,
               type: parsed.data.type,
-            },
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-          };
-          allMessages.push(msg);
-        } catch (e) {
-          console.error("Error parsing client audio:", e);
-        }
-      }
-      if (projectDetails.headchats && i < projectDetails.headchats.length) {
+            }
+          : undefined,
+      };
+      allMessages.push(msg);
+    } catch (e) {
+      console.error("Error parsing client audio:", e);
+    }
+  }
+}      if (projectDetails.headchats && i < projectDetails.headchats.length) {
         const chatStr = projectDetails.headchats[i];
         try {
           const parsed = JSON.parse(chatStr);
@@ -821,100 +869,118 @@ console.log("Project Details:", projectDetails);
           console.error("Error parsing head chat:", e);
         }
       }
-      if (projectDetails.headaudios && i < projectDetails.headaudios.length) {
-        const audioStr = projectDetails.headaudios[i];
-        try {
-          const parsed = JSON.parse(audioStr);
-          let timestamp = parsed.timestamp;
-          if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-            timestamp = new Date().toISOString();
-          }
-          const msg: ChatMessage = {
-            type: "file",
-            isLeft: false,
-            fromClient: false,
-            fromHead: true,
-            fromTeamLeader: false,
-            file: {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            },
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-          };
-          allMessages.push(msg);
-        } catch (e) {
-          console.error("Error parsing head audio:", e);
-        }
+if (projectDetails.headaudios && i < projectDetails.headaudios.length) {
+  const audioStr = projectDetails.headaudios[i];
+  try {
+    const parsed = JSON.parse(audioStr);
+    let timestamp = parsed.timestamp;
+    if (!timestamp || isNaN(new Date(timestamp).getTime())) {
+      timestamp = new Date().toISOString();
+    }
+    const msg: ChatMessage = {
+      type: "file",
+      isLeft: false,
+      fromClient: false,
+      fromHead: true,
+      fromTeamLeader: false,
+      timestamp,
+      seen_by: parsed.seen_by || [],
+      id: i,
+      mention: parsed.mention || null,
+      replyTo: parsed.replyTo || null,
+      isDeleted: parsed.isDeleted || false,
+      deletedAt: parsed.deletedAt,
+      caption: parsed.caption || undefined,
+    };
+    if (!parsed.isDeleted) {
+      msg.file = {
+        name: parsed.data.name,
+        url: `${serverURL}${parsed.data.url}`,
+        type: parsed.data.type,
+      };
+    }
+    allMessages.push(msg);
+  } catch (e) {
+    console.error("Error parsing head audio:", e);
+  }
+}
+// ================== TL CHATS ==================
+if (projectDetails.tlchats && i < projectDetails.tlchats.length) {
+  const chatStr = projectDetails.tlchats[i];
+  try {
+    const parsed = JSON.parse(chatStr);
+    let timestamp = parsed.timestamp || new Date().toISOString();
+
+    const msg: ChatMessage = {
+      type: parsed.type === "text" ? "text" : "file",
+      isLeft: true,
+      fromClient: false,
+      fromHead: false,
+      fromTeamLeader: true,
+      timestamp,
+      seen_by: parsed.seen_by || [],
+      id: i,
+      mention: parsed.mention || null,
+      replyTo: parsed.replyTo || null,
+      isDeleted: parsed.isDeleted || false,
+      deletedAt: parsed.deletedAt,
+      edited: parsed.edited || false,
+      editedAt: parsed.editedAt,
+      caption: parsed.caption || undefined,
+    };
+
+    if (!parsed.isDeleted) {
+      if (parsed.type === "text") {
+        msg.message = parsed.data;
+      } else if (parsed.data) {
+        msg.file = {
+          name: parsed.data.name,
+          url: `${serverURL}${parsed.data.url}`,
+          type: parsed.data.type,
+        };
       }
-      if (projectDetails.tlchats && i < projectDetails.tlchats.length) {
-        const chatStr = projectDetails.tlchats[i];
-        try {
-          const parsed = JSON.parse(chatStr);
-          let timestamp = parsed.timestamp;
-          if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-            timestamp = new Date().toISOString();
-          }
-          const msg: ChatMessage = {
-            type: parsed.type === "text" ? "text" : "file",
-            isLeft: true,
-            fromClient: false,
-            fromHead: false,
-            fromTeamLeader: true,
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-          };
-          if (parsed.type === "text") {
-            msg.message = parsed.data;
-          } else {
-            msg.file = {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            };
-          }
-          allMessages.push(msg);
-        } catch (e) {
-          console.error("Error parsing TL chat:", e);
-        }
-      }
-      if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
-        const audioStr = projectDetails.tlaudios[i];
-        try {
-          const parsed = JSON.parse(audioStr);
-          let timestamp = parsed.timestamp;
-          if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-            timestamp = new Date().toISOString();
-          }
-          const msg: ChatMessage = {
-            type: "file",
-            isLeft: true,
-            fromClient: false,
-            fromHead: false,
-            fromTeamLeader: true,
-            file: {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            },
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-          };
-          allMessages.push(msg);
-        } catch (e) {
-          console.error("Error parsing TL audio:", e);
-        }
-      }
+    }
+    allMessages.push(msg);
+  } catch (e) {
+    console.error("Error parsing TL chat:", e);
+  }
+}
+
+// ================== TL AUDIOS ==================
+if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
+  const audioStr = projectDetails.tlaudios[i];
+  try {
+    const parsed = JSON.parse(audioStr);
+    let timestamp = parsed.timestamp || new Date().toISOString();
+
+    const msg: ChatMessage = {
+      type: "file",
+      isLeft: true,
+      fromClient: false,
+      fromHead: false,
+      fromTeamLeader: true,
+      timestamp,
+      seen_by: parsed.seen_by || [],
+      id: i,
+      mention: parsed.mention || null,
+      replyTo: parsed.replyTo || null,
+      isDeleted: parsed.isDeleted || false,
+      deletedAt: parsed.deletedAt,
+      caption: parsed.caption || undefined,
+    };
+
+    if (!parsed.isDeleted && parsed.data) {
+      msg.file = {
+        name: parsed.data.name,
+        url: `${serverURL}${parsed.data.url}`,
+        type: parsed.data.type,
+      };
+    }
+    allMessages.push(msg);
+  } catch (e) {
+    console.error("Error parsing TL audio:", e);
+  }
+}
     }
     allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     setChatMessages(allMessages);
@@ -963,6 +1029,165 @@ console.log("Project Details:", projectDetails);
       });
     }
   }, [chatMessages]);
+
+  // === NEW: Live Client + TL edit/delete sync in Head view ===
+useEffect(() => {
+  if (!socket || !projectDetails?.project_id) return;
+
+  const handleClientEdited = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    console.log("📥 Head received clientMessageEdited:", data);
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromClient) {
+          return { ...m, message: data.newData || data.updatedMsg?.data, edited: true, editedAt: data.editedAt || data.updatedMsg?.editedAt };
+        }
+        return m;
+      })
+    );
+  };
+
+  const handleClientDeleted = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    console.log("📥 Head received clientMessageDeleted:", data);
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromClient) {
+          return {
+            ...m,
+            isDeleted: true,
+            deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          };
+        }
+        return m;
+      })
+    );
+  };
+
+  const handleTLEdited = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        (m.id === data.index || m.timestamp === data.timestamp) && m.fromTeamLeader
+          ? { ...m, message: data.newData, edited: true, editedAt: data.editedAt }
+          : m
+      )
+    );
+  };
+
+  const handleTLDeleted = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        (m.id === data.index || m.timestamp === data.timestamp) && m.fromTeamLeader
+          ? { ...m, isDeleted: true, deletedAt: data.deletedAt, message: undefined, file: undefined }
+          : m
+      )
+    );
+  };
+
+  socket.on("clientMessageEdited", handleClientEdited);
+  socket.on("clientMessageDeleted", handleClientDeleted);
+  socket.on("tlMessageEdited", handleTLEdited);
+  socket.on("tlMessageDeleted", handleTLDeleted);
+
+  return () => {
+    socket.off("clientMessageEdited", handleClientEdited);
+    socket.off("clientMessageDeleted", handleClientDeleted);
+    socket.off("tlMessageEdited", handleTLEdited);
+    socket.off("tlMessageDeleted", handleTLDeleted);
+  };
+}, [socket, projectDetails?.project_id]);
+
+// === NEW: Live sync for Client + Head edit/delete in TL view ===
+useEffect(() => {
+  if (!socket || !projectDetails?.project_id) return;
+
+  const handleClientEdited = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    console.log("📥 TL received clientMessageEdited:", data);
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromClient) {
+          return {
+            ...m,
+            message: data.newData || data.updatedMsg?.data,
+            edited: true,
+            editedAt: data.editedAt || data.updatedMsg?.editedAt,
+          };
+        }
+        return m;
+      })
+    );
+  };
+
+  const handleClientDeleted = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    console.log("📥 TL received clientMessageDeleted:", data);
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromClient) {
+          return {
+            ...m,
+            isDeleted: true,
+            deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          };
+        }
+        return m;
+      })
+    );
+  };
+
+  const handleHeadEdited = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    console.log("📥 TL received headMessageEdited:", data);
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        (m.id === data.index || m.timestamp === data.timestamp) && m.fromHead
+          ? { ...m, message: data.newData, edited: true, editedAt: data.editedAt }
+          : m
+      )
+    );
+  };
+
+  const handleHeadDeleted = (data: any) => {
+    if (data.projectId !== projectDetails.project_id) return;
+    console.log("📥 TL received headMessageDeleted:", data);
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        (m.id === data.index || m.timestamp === data.timestamp) && m.fromHead
+          ? { ...m, isDeleted: true, deletedAt: data.deletedAt, message: undefined, file: undefined }
+          : m
+      )
+    );
+  };
+
+  socket.on("clientMessageEdited", handleClientEdited);
+  socket.on("clientMessageDeleted", handleClientDeleted);
+  socket.on("headMessageEdited", handleHeadEdited);
+  socket.on("headMessageDeleted", handleHeadDeleted);
+
+  return () => {
+    socket.off("clientMessageEdited", handleClientEdited);
+    socket.off("clientMessageDeleted", handleClientDeleted);
+    socket.off("headMessageEdited", handleHeadEdited);
+    socket.off("headMessageDeleted", handleHeadDeleted);
+  };
+}, [socket, projectDetails?.project_id]);
 
   const handleSubmitSOW = async () => {
     setLoading(true);
@@ -1635,83 +1860,144 @@ const handleSendMessage = async (
     }
   };
 
-  // Head edit/delete socket listeners
-  useEffect(() => {
-    if (!socket) return;
-    const handleEdited = (data: { projectId: string; index: number; newData: string; editedAt: string }) => {
-      if (data.projectId !== projectDetails?.project_id) return;
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === data.index && m.fromHead
-            ? { ...m, message: data.newData, edited: true, editedAt: data.editedAt }
-            : m
-        )
-      );
-    };
-    const handleDeleted = (data: { projectId: string; index: number; deletedAt: string }) => {
-      if (data.projectId !== projectDetails?.project_id) return;
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === data.index && m.fromHead
-            ? { ...m, isDeleted: true, deletedAt: data.deletedAt, message: undefined, file: undefined }
-            : m
-        )
-      );
-    };
-    socket.on("headMessageEdited", handleEdited);
-    socket.on("headMessageDeleted", handleDeleted);
-    return () => {
-      socket.off("headMessageEdited", handleEdited);
-      socket.off("headMessageDeleted", handleDeleted);
-    };
-  }, [socket, projectDetails?.project_id]);
+// ==================== ROBUST TL EDIT/DELETE LISTENER (Head side) ====================
+useEffect(() => {
+  if (!socket) return;
 
-  const handleEditMessage = (msg: ChatMessage) => {
-    if (msg.type !== "text" || msg.isDeleted) return;
-    setEditingMessage(msg);
-    setNewMessage(msg.message || "");
-    inputRef.current?.focus();
-    setMessageMenuIndex(null);
+  const handleTLEdited = (data: any) => {
+    if (data.projectId !== projectDetails?.project_id) return;
+
+    console.log("📥 Head received tlMessageEdited:", data); // TEMP debug
+
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        const isTL = m.fromTeamLeader === true;
+
+        if ((idMatch || timeMatch) && isTL) {
+          return {
+            ...m,
+            message: data.newData,
+            edited: true,
+            editedAt: data.editedAt,
+          };
+        }
+        return m;
+      })
+    );
   };
 
-  const handleDeleteMessage = async (msg: ChatMessage) => {
-    setMessageMenuIndex(null);
-    const timestamp = new Date().toISOString();
+  const handleTLDeleted = (data: any) => {
+    if (data.projectId !== projectDetails?.project_id) return;
+
+    console.log("📥 Head received tlMessageDeleted:", data); // TEMP debug
+
     setChatMessages((prev) =>
-      prev.map((m) =>
-        m.timestamp === msg.timestamp && m.fromHead
-          ? { ...m, isDeleted: true, deletedAt: timestamp, message: undefined, file: undefined }
-          : m
-      )
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        const isTL = m.fromTeamLeader === true;
+
+        if ((idMatch || timeMatch) && isTL) {
+          return {
+            ...m,
+            isDeleted: true,
+            deletedAt: data.deletedAt,
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          };
+        }
+        return m;
+      })
     );
-    if (socket && connected && projectDetails?.project_id && msg.id !== undefined) {
-      socket.emit("deleteHeadMessage", {
-        projectId: projectDetails.project_id,
-        index: msg.id,
-        timestamp,
-      });
-    }
   };
 
-  const sendEditedMessage = async () => {
-    if (!editingMessage || !newMessage.trim() || !socket || !connected || !projectDetails?.project_id) return;
-    const editedAt = new Date().toISOString();
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.timestamp === editingMessage.timestamp && m.fromHead
-          ? { ...m, message: newMessage.trim(), edited: true, editedAt }
-          : m
-      )
-    );
-    socket.emit("editHeadMessage", {
+  socket.on("tlMessageEdited", handleTLEdited);
+  socket.on("tlMessageDeleted", handleTLDeleted);
+
+  return () => {
+    socket.off("tlMessageEdited", handleTLEdited);
+    socket.off("tlMessageDeleted", handleTLDeleted);
+  };
+}, [socket, projectDetails?.project_id]);
+
+const handleEditMessage = (msg: ChatMessage) => {
+  if (msg.type !== "text" || msg.isDeleted) return;
+
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 3500); // auto hide
+    setMessageMenuIndex(null);
+    return;
+  }
+
+  setEditingMessage(msg);
+  setNewMessage(msg.message || "");
+  inputRef.current?.focus();
+  setMessageMenuIndex(null);
+};
+
+const handleDeleteMessage = async (msg: ChatMessage) => {
+  setMessageMenuIndex(null);
+
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 3500);
+    return;
+  }
+
+  // Optimistic UI
+  setChatMessages((prev) =>
+    prev.map((m) =>
+      m.timestamp === msg.timestamp && m.fromHead
+        ? {
+            ...m,
+            isDeleted: true,
+            deletedAt: new Date().toISOString(),
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          }
+        : m
+    )
+  );
+
+  if (socket && connected && projectDetails?.project_id) {
+    socket.emit("deleteHeadMessage", {
       projectId: projectDetails.project_id,
-      index: editingMessage.id,
-      newData: newMessage.trim(),
-      editedAt,
+      index: msg.id,               // important
+      timestamp: msg.timestamp,    // important
     });
-    setEditingMessage(null);
-    setNewMessage("");
-  };
+  }
+};
+
+
+const sendEditedMessage = async () => {
+  if (!editingMessage || !newMessage.trim() || !socket || !connected || !projectDetails?.project_id) return;
+
+  const editedAt = new Date().toISOString();
+
+  setChatMessages((prev) =>
+    prev.map((m) =>
+      m.timestamp === editingMessage.timestamp && m.fromHead
+        ? { ...m, message: newMessage.trim(), edited: true, editedAt }
+        : m
+    )
+  );
+
+  socket.emit("editHeadMessage", {
+    projectId: projectDetails.project_id,
+    index: editingMessage.id,
+    newData: newMessage.trim(),
+    editedAt,
+    timestamp: editingMessage.timestamp, // ← important
+  });
+
+  setEditingMessage(null);
+  setNewMessage("");
+};
   const handleOpenPreview = (file: File | undefined, msg: ChatMessage) => {
     if (file) {
       setSelectedFile(file);
@@ -2130,7 +2416,7 @@ const handleSendMessage = async (
   md:w-1/2 w-full md:min-h-[400px] min-h-[300px]
   md:max-h-[650px] max-h-[550px]
   flex flex-col items-center justify-between pb-10
-  ${isCompleted ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}
+  ${isCompleted ? 'bg-[#dddddd]' : `${isChatDisabled ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}`}
   ring-1 ring-inset ring-cyan-100/50
   text-slate-500
   shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)]
@@ -2142,7 +2428,7 @@ const handleSendMessage = async (
                 <div
                   className="flex items-center w-fit rounded-md justify-center text-white"
                   style={{
-    background: isCompleted
+    background: isCompleted || isChatDisabled
       ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
       : currentTab === "chat"
       ? "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
@@ -2307,10 +2593,14 @@ const handleSendMessage = async (
                                     </div>
                                   )}
                                   {msg.isDeleted ? (
-                                    <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
-                                      <MdBlock size={14} />
-                                      {!msg.isLeft ? "You deleted this message" : "This message was deleted"}
-                                    </div>
+  <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+    <MdBlock size={14} />
+    {msg.fromHead 
+      ? "You deleted this message" 
+      : msg.fromTeamLeader 
+        ? "Team Leader deleted this message" 
+        : "This message was deleted"}
+  </div>
                                   ) : (
                                     <>
                                       {msg.type === "text" && msg.message && (
@@ -2695,7 +2985,7 @@ const handleSendMessage = async (
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onSend={handleSendMessage}
-                disabled={isCompleted}
+                disabled={isChatDisabled}
                 placeholder="Type your message..."
                 onPreviewHeightChange={handlePreviewHeightChange}
                 inputRef={inputRef}
@@ -3066,6 +3356,15 @@ const handleSendMessage = async (
           />
         )}
       </div>
+      {/* ─── 2-minute edit/delete time-limit popup ─── */}
+{/* Auto-hiding 2-min toast */}
+{showTimeLimitPopup && (
+  <div className="fixed bottom-[85px] left-1/2 -translate-x-1/2 z-[60]">
+    <div className="bg-gray-900/95 text-white text-[11px] font-medium px-4 py-1.5 rounded-full shadow-lg backdrop-blur-sm whitespace-nowrap">
+      ⏰ You can only edit/delete within 2 minutes
+    </div>
+  </div>
+)}
     </div>
   );
 };

@@ -52,14 +52,19 @@ const Filter: React.FC<FilterProps> = ({ filters, setClose, setSelectedFilters, 
       <div className="w-full flex">
         <div className="w-full items-start flex flex-col justify-between">
           <div className="text-[12px] font-bold mb-2">Filter</div>
-          <div className="font-bold text-[12px] mb-4 space-x-[2px]">
-            <span
-              className="hover:scale-110 hover:border-blue-400 px-2 py-1 rounded-sm border-[1.5px]  duration-150 transition transform cursor-pointer"
-              onClick={handleClearFilters}
-            >
-              Clear filters
-            </span>
-          </div>
+         <div className="font-bold text-[12px] mb-4 space-x-[2px]">
+  <span
+    className="
+      px-2 py-1 rounded-sm border-[1.5px]
+      cursor-pointer transition-all duration-150
+      hover:bg-gray-100 hover:border-gray-400
+      active:bg-gray-200 active:scale-95
+    "
+    onClick={handleClearFilters}
+  >
+    Clear filters
+  </span>
+</div>
         </div>
         {(isXXS || isXS || isSM || isMD) && (
           <div onClick={() => setClose(false)} className="p-2 h-fit rounded-full">

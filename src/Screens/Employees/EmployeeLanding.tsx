@@ -22,6 +22,7 @@ interface ProjectDetailsProps {
   deadline: string;
   description: string | string[];
   status: string;
+  active_date?: string | null;
 }
 
 interface ProjectRequestProps {
@@ -768,17 +769,35 @@ const requestedUnreadTotal = useMemo(() =>
                         >
                           {item.title}
                         </div>
-                        <div
-                          className={`text-[#000000] font-normal flex justify-center w-[35%] ${
-                            is2XL ? "text-[15px]" : "text-[12px]"
-                          } -tracking-[0.02rem]`}
-                        >
-                         Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                        </div>
+                       <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${
+    is2XL ? "text-[15px]" : "text-[12px]"
+  } -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+
+  {/* Active since */}
+  {(item as any).active_date && (item as any).status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                        <div
   className={`${
     "status" in item

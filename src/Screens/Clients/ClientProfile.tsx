@@ -28,6 +28,7 @@ interface Project {
   hasSOWFromHead: boolean;
   headName: string;
   teamLeaderName: string;
+  active_date?: string | null;
 }
 
 const ClientProfile: React.FC = () => {
@@ -176,6 +177,7 @@ const headChats = getChatArray(projectData.headchats);
     hasSOWFromHead,
     headName,
     teamLeaderName,
+    active_date: project.active_date || null,
   };
 });
 
@@ -784,14 +786,31 @@ const IconChat = () => (
     {item.Title}
   </div>
   <div
-    className={`font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
-  >
-Submission Date: {new Date(item.SubmissionDate).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
+  className={`font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(item.SubmissionDate).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
   </div>
+
+  {item.active_date && item.status !== "Completed" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date(item.active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                         <div
     className={`w-[30%] justify-center font-normal text-[12px] -tracking-[0.02rem] flex items-center`}
   >

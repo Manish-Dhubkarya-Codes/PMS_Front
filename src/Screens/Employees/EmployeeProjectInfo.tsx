@@ -16,7 +16,8 @@ import { Commet } from "react-loading-indicators";
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 import { TbListDetails } from "react-icons/tb";
-import { MdOutlineDoubleArrow, MdOutlineReply } from "react-icons/md";
+import { MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply, MdBlock } from "react-icons/md";
+import { BsThreeDotsVertical } from "react-icons/bs";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -33,6 +34,10 @@ interface ChatMessage {
   senderName?: string;
   senderPic?: string;   // ← NEW
   senderId?: string;
+  edited?: boolean;
+  editedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 interface File {
   url: string;
@@ -112,6 +117,85 @@ const [isRequesting, setIsRequesting] = useState(false);  // ← for Request but
   const [isUpdatesLoading, setIsUpdatesLoading] = useState(true);
   const [replyToMessage, setReplyToMessage] = useState<ReplyMessage | null>(null);
 const isCompleted = projectDetails?.status === "Completed";
+const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
+
+const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
+const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
+
+const isWithinEditWindow = (msg: ChatMessage): boolean => {
+  if (!msg.timestamp) return false;
+  return Date.now() - new Date(msg.timestamp).getTime() < 2 * 60 * 1000;
+};
+
+const [isChatEligible, setIsChatEligible] = useState(false);
+
+const handleEditMessage = (msg: ChatMessage) => {
+  if (msg.type !== "text") return;
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 2500);
+    setMessageMenuIndex(null);
+    return;
+  }
+  setEditingMessage(msg);
+  setNewMessage(msg.message || "");
+  inputRef.current?.focus();
+  setMessageMenuIndex(null);
+};
+
+const sendEditedMessage = () => {
+  if (!editingMessage || !projectDetails?.project_id || !socket || !connected) return;
+
+  const editedAt = new Date().toISOString();
+
+  setChatMessages(prev =>
+    prev.map(m =>
+      m.timestamp === editingMessage.timestamp
+        ? { ...m, message: newMessage.trim(), edited: true, editedAt }
+        : m
+    )
+  );
+
+  socket.emit("editTLMonitorMessage", {
+    projectId: projectDetails.project_id,
+    index: editingMessage.id,
+    newData: newMessage.trim(),
+    timestamp: editingMessage.timestamp,
+    fromTL: false,
+  });
+
+  setEditingMessage(null);
+  setNewMessage("");
+};
+
+const handleDeleteMessage = (msg: ChatMessage) => {
+  if (!projectDetails?.project_id || !socket || !connected) return;
+  setMessageMenuIndex(null);
+
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 2500);
+    return;
+  }
+
+  // Optimistic
+  setChatMessages(prev =>
+    prev.map(m =>
+      m.timestamp === msg.timestamp
+        ? { ...m, isDeleted: true, deletedAt: new Date().toISOString(), message: undefined, file: undefined }
+        : m
+    )
+  );
+
+  socket.emit("deleteTLMonitorMessage", {
+    projectId: projectDetails.project_id,
+    index: msg.id,
+    timestamp: msg.timestamp,
+    fromTL: false, // Employee message
+  });
+};
+
 
 const handleReplyToMessage = (msg: ChatMessage) => {
 const sender = msg.fromTL
@@ -199,242 +283,267 @@ const handleClickOnReplyBubble = (reply: ReplyMessage) => {
     }
   }, [item]);
 
-  // Chat ab hamesha dikhega jab tak project complete na ho
 useEffect(() => {
-  setShowChat(!isCompleted);
-}, [isCompleted]);
+  const checkEligibility = async () => {
+    if (!item?.project_id || !employeeData?.employeeId) {
+      setIsChatEligible(false);
+      return;
+    }
+    try {
+      const res = await getData(
+        `clientproject/is_employee_chat_eligible/${item.project_id}/${employeeData.employeeId}`
+      );
+      if (res?.status) {
+        setIsChatEligible(!!res.showChat);
+      } else {
+        setIsChatEligible(false);
+      }
+    } catch (err) {
+      console.error("Eligibility check failed:", err);
+      setIsChatEligible(false);
+    }
+  };
+
+  checkEligibility();
+}, [item?.project_id, employeeData?.employeeId]);
+
+useEffect(() => {
+  setShowChat(isChatEligible && !isCompleted);
+}, [isChatEligible, isCompleted]);
 
 
   // Socket connection and event listeners
-  useEffect(() => {
-    if (socket && connected && showChat && item?.project_id) {
-      const projectId = item.project_id;
-      socket.emit("joinEmployeeChat", projectId);
-      socket.emit("requestTLMonitorChats", projectId);
-      const handleChats = (data: any) => {
-        console.log("🔥 1. RAW DATA FROM BACKEND:", data);
-console.log("🔥 2. FIRST MONITOR CHAT SENDER NAME:", data?.monitorchats?.[0]?.senderName);
-        setTlMonitorChats(data);
-      };
-      const handleNewMessage = (data: { fromRole: string; msg: any }) => {
-  const { fromRole, msg: incoming } = data;
-  setChatMessages((prev) => {
-    const isDuplicate = prev.some((m) =>
-      m.timestamp === incoming.timestamp &&
-      ((m.type === "text" && m.message === incoming.data) ||
-       (m.type === "file" && m.file?.name === incoming.data.name))
-    );
-    if (isDuplicate) return prev;
-    const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
-    if (existingIndex !== -1) {
-      const updated = [...prev];
-      updated[existingIndex] = {
-        ...updated[existingIndex],
-        id: incoming.id,
-        tempId: undefined,
-      };
-      return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    } else {
-      const fromTL = fromRole === "tl";
-      // const viewerRole = "monitor"; // Fixed for employee/monitor view
-      const isLeft = incoming.senderId !== employeeData.employeeId;
-      const newMsg: ChatMessage = {
-        type: incoming.type === "text" ? "text" : "file",
-        isLeft,
-        fromTL,
-        timestamp: incoming.timestamp,
-        seen_by: incoming.seen_by,
-        id: incoming.id,
-        replyTo: incoming.replyTo || null,
-        senderId: incoming.senderId,
-senderName: incoming.senderName,
-senderPic: incoming.senderPic || "",
-      };
-      if (incoming.type === "text") {
-        newMsg.message = incoming.data;
-      } else {
-        newMsg.file = {
-          name: incoming.data.name,
-          url: `${serverURL}${incoming.data.url}`,
-          type: incoming.data.type,
-        };
-      }
-      const updated = [...prev, newMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      return updated;
-    }
-  });
-    playNotification();
-};
-      const handleMessageSeen = (data: { fromTL: boolean; timestamp: string; seen_by: string[] }) => {
-        const { fromTL, timestamp, seen_by } = data;
-        setChatMessages((prev) => prev.map((m) => {
-          if (m.timestamp === timestamp && m.fromTL === fromTL) {
-            return { ...m, seen_by };
-          }
-          return m;
-        }));
-      };
-      socket.on("tlMonitorChats", handleChats);
-      socket.on("newTLMonitorMessage", handleNewMessage);
-      socket.on("tlMonitorMessageSeen", handleMessageSeen);
-      return () => {
-        socket.off("tlMonitorChats", handleChats);
-        socket.off("newTLMonitorMessage", handleNewMessage);
-        socket.off("tlMonitorMessageSeen", handleMessageSeen);
-      };
-    }
-  }, [socket, connected, showChat, item, playNotification]);
-  // Process TL-Monitor chats
-// Process TL-Monitor chats
 useEffect(() => {
-  if (!tlMonitorChats || !projectDetails) return;
+  if (socket && connected && showChat && item?.project_id) {
+    const projectId = item.project_id;
+    socket.emit("joinEmployeeChat", projectId);
+    socket.emit("requestTLMonitorChats", projectId);
+    socket.emit("joinEmployeeRoom", employeeData.employeeId);   // ← ADD THIS LINE
 
-  let allMessages: ChatMessage[] = [];
+    const handleChats = (data: any) => {
+      console.log("🔥 1. RAW DATA FROM BACKEND:", data);
+      console.log("🔥 2. FIRST MONITOR CHAT SENDER NAME:", data?.monitorchats?.[0]?.senderName);
+      setTlMonitorChats(data);
+    };
 
-  const maxLengthTL = Math.max(tlMonitorChats.tlchats?.length || 0, tlMonitorChats.tlaudios?.length || 0);
-  const maxLengthMonitor = Math.max(tlMonitorChats.monitorchats?.length || 0, tlMonitorChats.monitoraudios?.length || 0);
-  const maxLength = Math.max(maxLengthTL, maxLengthMonitor);
-
-  for (let i = 0; i < maxLength; i++) {
-
-    // ====================== TL chats processing ======================
-    if (i < (tlMonitorChats.tlchats?.length || 0)) {
-      const chatStr = tlMonitorChats.tlchats?.[i];
-      if (typeof chatStr === "string") {
-        try {
-          const parsed = JSON.parse(chatStr);
-          let timestamp = parsed.timestamp || new Date().toISOString();
-
-          const msg: ChatMessage = {
-            type: parsed.type === "text" ? "text" : "file",
-            isLeft: true,
-            fromTL: true,
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            replyTo: parsed.replyTo || null,
-            // ✅ NEW - Sender info (fixes name for solo employee messages)
-            senderName: parsed.senderName || tlMonitorChats?.teamleadername,
-            senderPic: parsed.senderPic || tlMonitorChats?.teamleaderpic,
+    const handleNewMessage = (data: { fromRole: string; msg: any }) => {
+      const { fromRole, msg: incoming } = data;
+      setChatMessages((prev) => {
+        const isDuplicate = prev.some((m) =>
+          m.timestamp === incoming.timestamp &&
+          ((m.type === "text" && m.message === incoming.data) ||
+           (m.type === "file" && m.file?.name === incoming.data.name))
+        );
+        if (isDuplicate) return prev;
+        const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
+        if (existingIndex !== -1) {
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            id: incoming.id,
+            tempId: undefined,
           };
-
-          if (parsed.type === "text") {
-            msg.message = parsed.data;
+          return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        } else {
+          const fromTL = fromRole === "tl";
+          const isLeft = incoming.senderId !== employeeData.employeeId;
+          const newMsg: ChatMessage = {
+            type: incoming.type === "text" ? "text" : "file",
+            isLeft,
+            fromTL,
+            timestamp: incoming.timestamp,
+            seen_by: incoming.seen_by,
+            id: incoming.id,
+            replyTo: incoming.replyTo || null,
+            senderId: incoming.senderId,
+            senderName: incoming.senderName,
+            senderPic: incoming.senderPic || "",
+          };
+          if (incoming.type === "text") {
+            newMsg.message = incoming.data;
           } else {
-            msg.file = {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
+            newMsg.file = {
+              name: incoming.data.name,
+              url: `${serverURL}${incoming.data.url}`,
+              type: incoming.data.type,
             };
           }
-          allMessages.push(msg);
-        } catch (e) {
-          console.error("Error parsing TL chat:", e);
+          const updated = [...prev, newMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          return updated;
         }
-      }
-    }
+      });
+      playNotification();
+    };
 
-    // ====================== TL audios processing ======================
-    if (tlMonitorChats.tlaudios && i < tlMonitorChats.tlaudios.length) {
-      const audioStr = tlMonitorChats.tlaudios[i];
+    const handleMessageSeen = (data: { fromTL: boolean; timestamp: string; seen_by: string[] }) => {
+      const { fromTL, timestamp, seen_by } = data;
+      setChatMessages((prev) => prev.map((m) => {
+        if (m.timestamp === timestamp && m.fromTL === fromTL) {
+          return { ...m, seen_by };
+        }
+        return m;
+      }));
+    };
+
+const handleEdited = (data: any) => {
+  if (String(data.projectId) !== String(item?.project_id)) return;
+
+  console.log("✏️ Employee received EDIT event:", data);
+
+  const updateFn = (m: ChatMessage) => {
+    const timeDiff = Math.abs(
+      new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
+    );
+    if (timeDiff < 10000) {
+      return {
+        ...m,
+        message: data.newData,
+        edited: true,
+        editedAt: data.editedAt || new Date().toISOString(),
+      };
+    }
+    return m;
+  };
+
+  setChatMessages((prev) => prev.map(updateFn));
+  setCombinedMessages((prev) => prev.map(updateFn));
+};
+
+const handleDeleted = (data: any) => {
+  if (String(data.projectId) !== String(item?.project_id)) return;
+
+  console.log("🗑️ Employee received DELETE event:", data);
+
+  const updateFn = (m: ChatMessage) => {
+    const timeDiff = Math.abs(
+      new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
+    );
+    if (timeDiff < 10000) {
+      return {
+        ...m,
+        isDeleted: true,
+        deletedAt: data.deletedAt || new Date().toISOString(),
+        message: undefined,
+        file: undefined,
+      };
+    }
+    return m;
+  };
+
+  setChatMessages((prev) => prev.map(updateFn));
+  setCombinedMessages((prev) => prev.map(updateFn));
+};
+
+// ==================== NEW: Employee Removed ====================
+const handleEmployeeRemoved = (data: { projectId: number | string; employeeId: number | string }) => {
+  if (
+    String(data.projectId) === String(item?.project_id) &&
+    String(data.employeeId) === String(employeeData.employeeId)
+  ) {
+    setIsChatEligible(false);
+    setShowChat(false);
+    alert("You have been removed from this project by the Team Leader.");
+  }
+};
+
+// ==================== NEW: Project Hold / Active ====================
+const handleProjectStatusUpdated = (data: { projectId: string | number; status: string }) => {
+  if (String(data.projectId) !== String(item?.project_id)) return;
+  setProjectDetails((prev) => (prev ? { ...prev, status: data.status } : prev));
+};
+// ==============================================================
+
+socket.on("tlMonitorChats", handleChats);
+socket.on("newTLMonitorMessage", handleNewMessage);
+socket.on("tlMonitorMessageSeen", handleMessageSeen);
+socket.on("tlMonitorMessageEdited", handleEdited);
+socket.on("tlMonitorMessageDeleted", handleDeleted);
+socket.on("employeeRemovedFromProject", handleEmployeeRemoved);
+socket.on("projectStatusUpdated", handleProjectStatusUpdated);   // ← ADD THIS
+
+    return () => {
+  socket.off("tlMonitorChats", handleChats);
+  socket.off("newTLMonitorMessage", handleNewMessage);
+  socket.off("tlMonitorMessageSeen", handleMessageSeen);
+  socket.off("tlMonitorMessageEdited", handleEdited);
+  socket.off("tlMonitorMessageDeleted", handleDeleted);
+  socket.off("employeeRemovedFromProject", handleEmployeeRemoved);
+  socket.off("projectStatusUpdated", handleProjectStatusUpdated);   // ← ADD THIS
+};
+  }
+}, [socket, connected, showChat, item, playNotification]);
+
+useEffect(() => {
+  if (!tlMonitorChats) return;
+
+  const allMessages: ChatMessage[] = [];
+
+  const processArray = (arr: any[] | undefined, isFromTL: boolean) => {
+    if (!arr) return;
+
+    let list = arr;
+    if (typeof arr === "string") {
+      try { list = JSON.parse(arr); } catch { return; }
+    }
+    if (!Array.isArray(list)) return;
+
+    list.forEach((str, index) => {
       try {
-        const parsed = JSON.parse(audioStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
+        const parsed = typeof str === "string" ? JSON.parse(str) : str;
+
+        const isOwnMessage = parsed.senderId 
+          ? String(parsed.senderId) === String(employeeData.employeeId)
+          : false;
 
         const msg: ChatMessage = {
-          type: "file",
-          isLeft: true,
-          fromTL: true,
-          file: {
+          type: parsed.type === "text" ? "text" : "file",
+          isLeft: isFromTL ? true : !isOwnMessage,
+          fromTL: isFromTL,
+          timestamp: parsed.timestamp,
+          seen_by: parsed.seen_by || [],
+          id: index,
+          replyTo: parsed.replyTo || null,
+          senderId: parsed.senderId,
+          senderName: parsed.senderName || 
+            (isFromTL ? tlMonitorChats.teamleadername : tlMonitorChats.monitorname) || 
+            employeeData?.employeeName || "Employee",
+          senderPic: parsed.senderPic || 
+            (isFromTL ? tlMonitorChats.teamleaderpic : tlMonitorChats.monitorpic) || "",
+          edited: !!parsed.edited,
+          editedAt: parsed.editedAt,
+          isDeleted: !!parsed.isDeleted,
+          deletedAt: parsed.deletedAt,
+        };
+
+        if (parsed.type === "text") {
+          msg.message = parsed.isDeleted ? undefined : parsed.data;
+        } else if (parsed.data) {
+          msg.file = parsed.isDeleted ? undefined : {
             name: parsed.data.name,
             url: `${serverURL}${parsed.data.url}`,
             type: parsed.data.type,
-          },
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          replyTo: parsed.replyTo || null,
-          // ✅ NEW - Sender info
-          senderName: parsed.senderName || tlMonitorChats?.teamleadername,
-          senderPic: parsed.senderPic || tlMonitorChats?.teamleaderpic,
-        };
+          };
+        }
+
         allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing TL audio:", e);
+      } catch (err) {
+        console.error("parse error", err);
       }
-    }
+    });
+  };
 
-if (tlMonitorChats.monitorchats && i < tlMonitorChats.monitorchats.length) {
-  const chatStr = tlMonitorChats.monitorchats[i];
-  try {
-    const parsed = JSON.parse(chatStr);
-    let timestamp = parsed.timestamp || new Date().toISOString();
-    
-    console.log("🔥 3. PARSED MONITOR CHAT SENDER NAME:", parsed.senderName);   // ← DEBUG
-
-    const msg: ChatMessage = {
-      type: parsed.type === "text" ? "text" : "file",
-      isLeft: parsed.senderId ? (parsed.senderId !== String(employeeData.employeeId)) : false,
-      senderId: parsed.senderId,
-      fromTL: false,
-      timestamp,
-      seen_by: parsed.seen_by || [],
-      id: i,
-      replyTo: parsed.replyTo || null,
-      senderName: parsed.senderName || tlMonitorChats?.monitorname || employeeData?.employeeName || "Employee",
-      senderPic: parsed.senderPic || tlMonitorChats?.monitorpic || "",
-    };
-    if (parsed.type === "text") {
-      msg.message = parsed.data;
-    } else {
-      msg.file = {
-        name: parsed.data.name,
-        url: `${serverURL}${parsed.data.url}`,
-        type: parsed.data.type,
-      };
-    }
-    allMessages.push(msg);
-  } catch (e) {
-    console.error("Error parsing Monitor chat:", e);
-  }
-}
-
-if (tlMonitorChats.monitoraudios && i < tlMonitorChats.monitoraudios.length) {
-  const audioStr = tlMonitorChats.monitoraudios[i];
-  try {
-    const parsed = JSON.parse(audioStr);
-    let timestamp = parsed.timestamp || new Date().toISOString();
-    
-    console.log("🔥 4. PARSED MONITOR AUDIO SENDER NAME:", parsed.senderName);   // ← DEBUG
-
-    const msg: ChatMessage = {
-      type: "file",
-      isLeft: parsed.senderId ? (parsed.senderId !== String(employeeData.employeeId)) : false,
-      senderId: parsed.senderId,
-      fromTL: false,
-      file: {
-        name: parsed.data.name,
-        url: `${serverURL}${parsed.data.url}`,
-        type: parsed.data.type,
-      },
-      timestamp,
-      seen_by: parsed.seen_by || [],
-      id: i,
-      replyTo: parsed.replyTo || null,
-      senderName: parsed.senderName || tlMonitorChats?.monitorname || employeeData?.employeeName || "Employee",
-      senderPic: parsed.senderPic || tlMonitorChats?.monitorpic || "",
-    };
-    allMessages.push(msg);
-  } catch (e) {
-    console.error("Error parsing Monitor audio:", e);
-  }
-}  
-}
+  processArray(tlMonitorChats.tlchats, true);
+  processArray(tlMonitorChats.tlaudios, true);
+  processArray(tlMonitorChats.monitorchats, false);
+  processArray(tlMonitorChats.monitoraudios, false);
 
   allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
   setChatMessages(allMessages);
-}, [tlMonitorChats, projectDetails, employeeData.employeeName]);   // ← Added employeeData.employeeName in deps
-  // Process client chats for updates only (new)
+  setCombinedMessages(allMessages);
+}, [tlMonitorChats, employeeData.employeeId, employeeData.employeeName]);
+
+
   useEffect(() => {
     if (!projectDetails) return;
     let updateMessages: ChatMessage[] = [];
@@ -1218,14 +1327,14 @@ const getSenderInfo = (msg: ChatMessage) => {
             </div>
             {showChat ? (
   <div className={`w-[50%] md:min-h-[400px] min-h-[300px] md:max-h-[650px] max-h-[550px] flex flex-col items-center justify-between pb-4
-      ${isCompleted ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}
+      ${isCompleted || isChatDisabled ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}
       ring-1 ring-inset ring-cyan-100/50 text-slate-500 shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)] shadow-[#8A8A8A] rounded-[10px]`}>
       <div className="w-full relative items-center md:h-[600px] h-[500px] md:max-h-[600px] max-h-[500px] justify-start flex flex-col">
         <div
           className="flex items-center w-fit rounded-md justify-center text-white"
           style={{
-    background: isCompleted
-      ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
+   background: isChatDisabled
+  ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
       : currentTab === "chat"
       ? "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
       : "conic-gradient(from 0deg at 49.56% 50%, #011B40 0deg, #0348A6 360deg)",
@@ -1366,203 +1475,245 @@ const getSenderInfo = (msg: ChatMessage) => {
                   </div>
                 </div>
                 <div
-                  className={`backdrop-blur-xl sm:w-fit sm:max-w-[250px] md:w-fit md:max-w-[180px] lg:w-fit lg:max-w-[220px] w-fit max-w-[180px] ${
-                    msg.isLeft
-                      ? "bg-white "
-                      : "bg-[#fffddc] border-r-yellow-600/30 border-r-[3px]"
-                  } shadow-[0_4px_20px_-4px_rgba(100,116,139,0.12)] p-3 rounded-2xl ${
-                    msg.isLeft
-                      ? "rounded-tl-none border-l-blue-600/30 border-l-[3px]"
-                      : "rounded-br-none"
-                  } transition-all duration-200 ease-out`}
-                >
-                  {msg.replyTo && ( // NEW: Add reply bubble
+  className={`backdrop-blur-xl sm:w-fit sm:max-w-[250px] md:w-fit md:max-w-[180px] lg:w-fit lg:max-w-[220px] w-fit max-w-[180px] ${
+    msg.isLeft
+      ? "bg-white "
+      : "bg-[#fffddc] border-r-yellow-600/30 border-r-[3px]"
+  } shadow-[0_4px_20px_-4px_rgba(100,116,139,0.12)] p-3 rounded-2xl ${
+    msg.isLeft
+      ? "rounded-tl-none border-l-blue-600/30 border-l-[3px]"
+      : "rounded-br-none"
+  } transition-all duration-200 ease-out`}
+>
+  {msg.replyTo && (
+    <div
+      onClick={() => handleClickOnReplyBubble(msg.replyTo!)}
+      className="mb-2 p-2 bg-[#ececec] rounded-md border-l-4 border-blue-500 cursor-pointer hover:bg-gray-200 transition"
+    >
+      <div className="text-xs font-medium text-gray-600">
+        {msg.replyTo.sender}
+      </div>
+      <div className="text-xs text-gray-500 truncate">
+        {msg.replyTo.content}
+      </div>
+    </div>
+  )}
+
+    {msg.isDeleted ? (
+    <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+      <MdBlock size={14} /> {msg.isLeft ? "This message was deleted" : "You deleted this message"}
+    </div>
+  ) : (
+    <>
+      {msg.message && msg.type === "text" && (
+        <div
+          className="text-gray-900 leading-snug break-words hyphens-auto"
+          dangerouslySetInnerHTML={{
+            __html: DOMPurify.sanitize(
+              highlightMessageText(msg.message)
+            ),
+          }}
+        />
+      )}
+
+      {msg.file &&
+        msg.file.url &&
+        msg.file.name && (
+          <div
+            ref={index === msgControl ? divRef : null}
+            onClick={() =>
+              setMsgControl(msgControl === index ? null : index)
+            }
+            className="
+              group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden
+              rounded-xl border border-slate-200 bg-white
+              transition-all duration-300 ease-out
+              hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)]
+              active:scale-[0.985]
+            "
+          >
+            <div className="flex items-center gap-3 px-3 py-2">
+              {(() => {
+                const fileType = msg.file.type;
+                let Icon = FaFileInvoice;
+                let color = "text-slate-600";
+
+                if (fileType.startsWith("audio/")) {
+                  Icon = FaFileAudio;
+                  color = "text-orange-500";
+                } else if (fileType.startsWith("image/")) {
+                  Icon = FaFileImage;
+                  color = "text-emerald-500";
+                } else if (fileType.startsWith("video/")) {
+                  Icon = FaFileVideo;
+                  color = "text-violet-500";
+                } else if (fileType === "application/pdf") {
+                  Icon = FaFilePdf;
+                  color = "text-rose-500";
+                } else if (
+                  fileType === "application/msword" ||
+                  fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ) {
+                  Icon = FaFileWord;
+                  color = "text-sky-600";
+                } else if (fileType === "application/zip") {
+                  Icon = FaFileArchive;
+                  color = "text-amber-500";
+                } else if (fileType === "text/html") {
+                  Icon = FaRegFileAlt;
+                  color = "text-amber-500";
+                }
+
+                return (
+                  <div
+                    className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}
+                  >
+                    <Icon size={18} />
+                  </div>
+                );
+              })()}
+
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-[13px] font-medium text-slate-800">
+                  {msg.file.name}
+                </p>
+                <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                  {getReadableFileType(msg.file.type)}
+                </p>
+              </div>
+            </div>
+
+            {(() => {
+              const fileType = msg.file.type;
+              const url = msg.file.url;
+              const name = msg.file.name;
+              if (fileType.startsWith("audio/")) {
+                return (
+                  <div className="px-3 py-2 border-t border-gray-200">
+                    <audio controls src={url} className="min-w-[150px] max-w-full" />
+                  </div>
+                );
+              } else if (fileType.startsWith("image/")) {
+                return (
+                  <div
+                    className="px-0 pb-2 relative border-t border-gray-200 h-[100px] flex items-center justify-center"
+                  >
+                    <img
+                      src={url}
+                      alt={name}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                    {msgControl === index && (
+                      <ActionBar msg={msg} index={index} url={url} name={name}/>
+                    )}
+                  </div>
+                );
+              } else if (fileType.startsWith("video/")) {
+                return (
+                  <div className="px-0 py-0 border-t border-gray-200">
+                    <video controls src={url} className="w-full max-h-[100px] object-contain" />
+                  </div>
+                );
+              } else if (
+                ["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)
+              ) {
+                return (
+                  <div className="px-3 flex items-center justify-center">
+                    {msgControl === index && (
+                      <ActionBar msg={msg} index={index} url={url} name={name}/>
+                    )}
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
+        )}
+    </>
+  )}
+
   <div
-    onClick={() => handleClickOnReplyBubble(msg.replyTo!)}
-    className="mb-2 p-2 bg-[#ececec] rounded-md border-l-4 border-blue-500 cursor-pointer hover:bg-gray-200 transition"
+    className={`text-xs text-gray-500 mt-1 ${
+      msg.isLeft ? "text-left" : "text-right"
+    }`}
   >
-    <div className="text-xs font-medium text-gray-600">
-      {msg.replyTo.sender}
+    {msg.edited && !msg.isDeleted && (
+      <span className="text-[10px] text-amber-500 mr-1 italic">edited</span>
+    )}
+    {new Date(msg.timestamp).toLocaleTimeString("en-IN")}
+    {!msg.isLeft && (
+      <span className="inline-flex items-center ml-1">
+        <IoCheckmarkDoneSharp
+          size={14}
+          color={isSeenByReceiver(msg) ? "#00B7FF" : "#000000"}
+          className="inline-block"
+        />
+        <FaInfoCircle
+          size={12}
+          color="#808080"
+          title={getSeenText(msg)}
+          className="inline-block ml-1 cursor-help"
+        />
+      </span>
+    )}
+  </div>
+
+  {!msg.isLeft && !msg.isDeleted && (
+    <div className="relative flex justify-end mt-1">
+      <div
+        className="cursor-pointer p-0.5 rounded-full hover:bg-gray-200 text-gray-400"
+        onClick={(e) => {
+          e.stopPropagation();
+          setMessageMenuIndex(messageMenuIndex === index ? null : index);
+        }}
+      >
+        <BsThreeDotsVertical size={13} />
+      </div>
+
+      {messageMenuIndex === index && (
+        <div className="absolute bottom-6 right-0 bg-white shadow-xl rounded-xl border border-gray-100 z-50 min-w-[110px] overflow-hidden">
+          {msg.type === "text" && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEditMessage(msg);
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 cursor-pointer"
+            >
+              <MdEdit size={15} className="text-blue-500" /> Edit
+            </div>
+          )}
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteMessage(msg);
+            }}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 cursor-pointer"
+          >
+            <MdDelete size={15} /> Delete
+          </div>
+        </div>
+      )}
     </div>
-    <div className="text-xs text-gray-500 truncate">
-      {msg.replyTo.content}
-    </div>
+  )}
+</div>
+</div>
+{msg.isLeft && !isCompleted && (
+  <div
+    onClick={() => handleReplyToMessage(msg)}
+    className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
+  >
+    <MdOutlineReply size={15} />
   </div>
 )}
-                  {msg.message && msg.type === "text" && (
-                                     <div
-                          className="text-gray-900 leading-snug break-words hyphens-auto"
-                          dangerouslySetInnerHTML={{
-                            __html: DOMPurify.sanitize(
-                              highlightMessageText(
-                                msg.message,
-                              )
-                            ),
-                          }}
-                                    />)}
-                            
-
-                  {msg.file &&
-                    msg.file.url &&
-                    msg.file.name && (
-                      <div
-                        ref={index === msgControl ? divRef : null}
-                        onClick={() =>
-                          setMsgControl(msgControl === index ? null : index)
-                        }
-                        className="
-                          group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden
-                          rounded-xl border border-slate-200 bg-white
-                          transition-all duration-300 ease-out
-                          hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)]
-                          active:scale-[0.985]
-                        "
-                      >
-                        {/* HEADER */}
-                        <div className="flex items-center gap-3 px-3 py-2">
-                          {(() => {
-                            const fileType = msg.file.type;
-                            let Icon = FaFileInvoice;
-                            let color = "text-slate-600";
-
-                            if (fileType.startsWith("audio/")) {
-                              Icon = FaFileAudio;
-                              color = "text-orange-500";
-                            } else if (fileType.startsWith("image/")) {
-                              Icon = FaFileImage;
-                              color = "text-emerald-500";
-                            } else if (fileType.startsWith("video/")) {
-                              Icon = FaFileVideo;
-                              color = "text-violet-500";
-                            } else if (fileType === "application/pdf") {
-                              Icon = FaFilePdf;
-                              color = "text-rose-500";
-                            } else if (
-                              fileType === "application/msword" ||
-                              fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            ) {
-                              Icon = FaFileWord;
-                              color = "text-sky-600";
-                            } else if (fileType === "application/zip") {
-                              Icon = FaFileArchive;
-                              color = "text-amber-500";
-                            } else if (fileType === "text/html") {
-                              Icon = FaRegFileAlt;
-                              color = "text-amber-500";
-                            }
-
-                            return (
-                              <div
-                                className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}
-                              >
-                                <Icon size={18} />
-                              </div>
-                            );
-                          })()}
-
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate text-[13px] font-medium text-slate-800">
-                              {msg.file.name}
-                            </p>
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                              {getReadableFileType(msg.file.type)}
-                            </p>
-                          </div>
-                        </div>
-
-                        {(() => {
-                          const fileType = msg.file.type;
-                          const url = msg.file.url;
-                          const name = msg.file.name;
-                          if (fileType.startsWith("audio/")) {
-                            return (
-                              <div className="px-3 py-2 border-t border-gray-200">
-                                <audio controls src={url} className="min-w-[150px] max-w-full" />
-                              </div>
-                            );
-                          } else if (fileType.startsWith("image/")) {
-                            return (
-                              <div
-                                className="px-0 pb-2 relative border-t border-gray-200 h-[100px] flex items-center justify-center"
-                              >
-                                <img
-                                  src={url}
-                                  alt={name}
-                                  className="max-h-full max-w-full object-contain"
-                                />
-                                {msgControl === index && (
-                                  <ActionBar msg={msg}
-                                          index={index}
-                                          url={url}
-                                          name={name}/>
-                                )}
-                              </div>
-                            );
-                          } else if (fileType.startsWith("video/")) {
-                            return (
-                              <div className="px-0 py-0 border-t border-gray-200">
-                                <video controls src={url} className="w-full max-h-[100px] object-contain" />
-                              </div>
-                            );
-                          } else if (
-                            ["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)
-                          ) {
-                            return (
-                              <div className="px-3 flex items-center justify-center">
-                                {msgControl === index && (
-                                  <ActionBar msg={msg}
-                                          index={index}
-                                          url={url}
-                                          name={name}/>
-                                )}
-                              </div>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
-                    )}
-
-                  <div
-                    className={`text-xs text-gray-500 mt-1 ${
-                      msg.isLeft ? "text-left" : "text-right"
-                    }`}
-                  >
-                    {new Date(msg.timestamp).toLocaleTimeString("en-IN")}
-                    {!msg.isLeft && (
-                      <span className="inline-flex items-center ml-1">
-                        <IoCheckmarkDoneSharp
-                          size={14}
-                          color={isSeenByReceiver(msg) ? "#00B7FF" : "#000000"}
-                          className="inline-block"
-                        />
-                        <FaInfoCircle
-                          size={12}
-                          color="#808080"
-                          title={getSeenText(msg)}
-                          className="inline-block ml-1 cursor-help"
-                        />
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {msg.isLeft && !isCompleted && ( // NEW: Add reply icon for left (received) messages
-                  <div
-                    onClick={() => handleReplyToMessage(msg)}
-                    className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
-                  >
-                    <MdOutlineReply size={15} />
-                  </div>
-                )}
-                {!msg.isLeft && !isCompleted && ( // NEW: Add reply icon for right (sent) messages
-                  <div
-                    onClick={() => handleReplyToMessage(msg)}
-                    className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
-                  >
-                    <MdOutlineReply className="scale-x-[-1]" size={15} />
-                  </div>
-                )}
+{!msg.isLeft && !isCompleted && (
+  <div
+    onClick={() => handleReplyToMessage(msg)}
+    className="transition-all duration-200 cursor-pointer p-0.5 rounded-full bg-slate-50 border border-slate-300 flex items-center justify-center shadow-[1px_1px_0px_0px_rgba(0,0,0,0.1)] hover:bg-slate-800 hover:text-white hover:border-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(59,130,246,0.3)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none text-slate-500"
+  >
+    <MdOutlineReply className="scale-x-[-1]" size={15} />
+  </div>
+)}
             </div>
           </div>
         </React.Fragment>
@@ -1627,21 +1778,27 @@ const getSenderInfo = (msg: ChatMessage) => {
                 </div>
                 <div className="w-[90%]">
                 <MikeSearch
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onSend={handleSendMessage}
-                  disabled={!showChat || isCompleted}
-                  placeholder="Type your message..."
-                  onPreviewHeightChange={setPreviewHeight}
-                  inputRef={inputRef}
-                  replyTo={replyToMessage} // NEW
-  onCancelReply={() => setReplyToMessage(null)} // NEW
+  value={newMessage}
+  onChange={(e) => setNewMessage(e.target.value)}
+  onSend={(message, type, files) => {
+    if (editingMessage) {
+      sendEditedMessage();
+    } else {
+      handleSendMessage(message, type, files);
+    }
+  }}
+  disabled={!showChat || isChatDisabled}
+  placeholder={editingMessage ? "Edit your message..." : "Type your message..."}
+  onPreviewHeightChange={setPreviewHeight}
+  inputRef={inputRef}
+  replyTo={replyToMessage}
+  onCancelReply={() => setReplyToMessage(null)}
   projectId={projectDetails?.project_id}
-                />
+/>
               </div>
               </div>
             ) : (
-              <div className="w-full text-center py-8 text-gray-500">
+              <div className="w-full text-[14px] text-center py-8 text-gray-500">
                 Chat not available for this role/assignment.
               </div>
             )}
@@ -1701,6 +1858,13 @@ const getSenderInfo = (msg: ChatMessage) => {
           {renderPreview(selectedFile)}
         </div>
       </div>
+    </div>
+  </div>
+)}
+{showTimeLimitPopup && (
+  <div className="fixed bottom-[85px] left-1/2 -translate-x-1/2 z-[60]">
+    <div className="bg-gray-900/95 text-white text-[11px] font-medium px-4 py-1.5 rounded-full shadow-lg">
+      ⏰ You can only edit/delete within 2 minutes
     </div>
   </div>
 )}

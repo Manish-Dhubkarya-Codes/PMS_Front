@@ -21,6 +21,7 @@ interface ProfileWithDesignationProps {
   projectId?: string;
   onMakeMonitor?: (employeeId: string, projectId: string) => void;
   onRemoveMonitor?: (employeeId: string, projectId: string) => void; // NEW: Added prop for remove monitor
+  onRemoveEmployee?: () => void;
 }
 
 const ProfileWithDesignation: React.FC<ProfileWithDesignationProps> = ({
@@ -41,6 +42,7 @@ const ProfileWithDesignation: React.FC<ProfileWithDesignationProps> = ({
   // projectId,
   // onMakeMonitor,
   // onRemoveMonitor, // NEW: Destructure the new prop
+  onRemoveEmployee
 }) => {
   const [width, setWidth] = useState(window.innerWidth);
   const [showMenu, setShowMenu] = useState(false);
@@ -136,58 +138,72 @@ const handleDeclineClick = () => {
   return (
     <div className="flex items-start relative" style={{ cursor: "pointer" }}>
       {/* Dropdown Menu */}
-      {(isTeamLeader) && (
-        <div className="absolute top-0 right-35 z-10">
-          <FaEllipsisV
-            size={12}
-            className="text-gray-500 cursor-pointer"
-            onClick={() => setShowMenu(!showMenu)}
-          />
-          {showMenu && (
-            <div className="profile-menu absolute -right-10 top-7 bg-white border border-gray-300 rounded-md shadow-lg z-50 min-w-[150px]">
-              {isTeamLeader && onRemoveAsTL && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveAsTL();
-                    setShowMenu(false);
-                  }}
-                  className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  Remove from Team Leader
-                </button>
-              )}
-              {/* {showMonitorOption && (
-                <div
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (Status === "Project Monitor") {
-                      handleRemoveMonitorClick();
-                    } else {
-                      handleMakeMonitorClick();
-                    }
-                  }}
-                  className="block cursor-pointer w-full text-left px-4 py-2 text-sm text-gray-700"
-                >
-                  {Status === "Project Monitor" ? "Remove as Monitor" : "Make Project Monitor"}
-                </div>
-              )} */}
-              {!isTeamLeader && onPromoteToTL && (
-                <div
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePromoteClick();
-                    setShowMenu(false);
-                  }}
-                  className="block cursor-pointer w-full text-left px-4 py-2 text-sm text-gray-700"
-                >
-                  Promote to Team Leader
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+{(onRemoveEmployee || isTeamLeader || onRemoveAsTL || onPromoteToTL) && (
+  <div className="absolute -top-1 left-25 z-20">
+    <div
+  type="button"
+  className="
+    w-8 h-8
+    flex items-center justify-center
+    rounded-full
+    text-gray-500
+    cursor-pointer
+    transition-colors duration-200
+    hover:bg-gray-200
+    hover:text-gray-800
+  "
+  onClick={(e) => {
+    e.stopPropagation();
+    setShowMenu(!showMenu);
+  }}
+  aria-label="More options"
+>
+  <FaEllipsisV size={14} />
+</div>
+    {showMenu && (
+      <div className="profile-menu absolute right-0 top-6 bg-white border border-gray-200 rounded-xl shadow-xl z-50 min-w-[170px] overflow-hidden">
+        {onRemoveEmployee && (
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemoveEmployee();
+              setShowMenu(false);
+            }}
+            className="block w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 font-medium"
+          >
+            Remove Employee
+          </div>
+        )}
+
+        {isTeamLeader && onRemoveAsTL && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemoveAsTL();
+              setShowMenu(false);
+            }}
+            className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Remove from Team Leader
+          </button>
+        )}
+
+        {!isTeamLeader && onPromoteToTL && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePromoteClick();
+              setShowMenu(false);
+            }}
+            className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Promote to Team Leader
+          </button>
+        )}
+      </div>
+    )}
+  </div>
+)}
 
       {/* Modal for Promoting to Team Leader */}
       {showPromoteModal && !isTeamLeader && (

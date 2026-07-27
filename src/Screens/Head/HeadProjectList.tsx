@@ -35,6 +35,7 @@ interface Project {
   teamLeaderName: string;
   status: string; // Add this
   progress: number;
+  active_date?: string | null;
 }
 interface ClientListProps {
   key_id: string;
@@ -319,9 +320,6 @@ const fetchProjects = useCallback(async () => {
     if (response.status) {
       const projectList = response.data || [];
       const detailedPromises = projectList.map(async (project: any) => {
-        if (project.status === "Hold") {
-          return null; // Skip projects with status "Hold"
-        }
         try {
           const projResponse = await getData(`clientproject/get_project/${project.project_id}`);
           if (projResponse.status && projResponse.data) {
@@ -384,7 +382,8 @@ const fetchProjects = useCallback(async () => {
               hasMentionFromTL,
               teamLeaderName,
               status: project.status,
-              progress: progressPercentage
+              progress: progressPercentage,
+              active_date: proj.active_date || null,
             };
           }
           return null;
@@ -965,6 +964,7 @@ const IconChat = () => (
                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                   value={item.workstream}
                 />
+                
 {totalUnreadForProject > 0 && !dismissedNotifications.has(item.project_id) && (
   <div className="relative w-fit max-w-xs ml-2">
     <div className="relative flex space-x-3 bg-blue-50 border border-blue-200 rounded-lg p-3 shadow-md">
@@ -1029,15 +1029,47 @@ const IconChat = () => (
               >
                 {item.title}
               </div>
-              <div
-                className={`${textColor} font-normal flex justify-center w-[30%] ${textSize} -tracking-[0.02rem]`}
-              >
-               Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-              </div>
+<div className="flex flex-col w-full sm:w-[30%] gap-1.5">
+  
+  {/* Submission Date */}
+  <div className={`flex items-center gap-2 ${textColor} ${textSize}`}>
+    {/* Minimalist Calendar Icon */}
+    <svg 
+      className="w-3.5 h-3.5 text-gray-400" 
+      fill="none" 
+      stroke="currentColor" 
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+    <span className="text-gray-500">Submission Date:</span>
+    <span className="font-semibold text-gray-800 tracking-tight">
+      {new Date(item.deadline).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      })}
+    </span>
+  </div>
+
+  {/* Active Status */}
+  {item.active_date && item.status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px]">
+      {/* Refined Status Dot */}
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date(item.active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+  
+</div>
               <div
   className={`${textColor} w-[20%] ${textSize} flex flex-col items-center justify-center`}
 >

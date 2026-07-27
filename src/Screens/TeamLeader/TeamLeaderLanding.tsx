@@ -27,6 +27,7 @@ interface ProjectListProps {
   description: string;
   status?: string;
   budget?: number;
+  active_date?: string | null;
 }
 
 interface RequestProps {
@@ -91,6 +92,7 @@ const TeamLeaderLanding: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [unreadInfo, setUnreadInfo] = useState<{ [project_id: string]: { unreadFromHead: number; unreadFromClient: number; unreadFromMonitor: number; hasMentionFromHead: boolean; hasMentionFromClient: boolean; headName: string; clientName: string; monitorName: string; } }>({});
   const [totalUnreadActive, setTotalUnreadActive] = useState<number>(0);
+  const [totalUnreadAssigned, setTotalUnreadAssigned] = useState<number>(0);
   const [totalUnreadOngoing, setTotalUnreadOngoing] = useState<number>(0);
   const [totalUnreadRequests, setTotalUnreadRequests] = useState<number>(0);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
@@ -109,7 +111,6 @@ const TeamLeaderLanding: React.FC = () => {
   const [selectedProgressProject, setSelectedProgressProject] = useState<ProjectListProps | null>(null);
   // Socket integration
   const { emitEvent, onEvent, connected } = useSocket();
-
   // Loading states for status updates
   const [loadingStatuses, setLoadingStatuses] = useState<{ [key: string]: 'Activating' | 'Holding' | 'Completing' | null }>({});
 
@@ -369,49 +370,73 @@ useEffect(() => {
     });
   }, [requests, projectDetails]);
 
-  useEffect(() => {
-    const requestedProjectIds = new Set(
-      requests
-        .filter((item) => ["pending", "accepted", "TLAssign"].includes(item.status || ""))
-        .map((item) => '' + item.project_id)
-    );
-    const ongoingIds = new Set(
-      requests
-        .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
-        .map((item) => '' + item.project_id)
-    );
-    const pendingIds = new Set(
-      requests
-        .filter((item) => item.status === "pending")
-        .map((item) => '' + item.project_id)
-    );
-    const activeIds = new Set(
-      projectDetails
-        .filter((p) => !requestedProjectIds.has('' + p.project_id))
-        .map((p) => '' + p.project_id)
-    );
+useEffect(() => {
+  const requestedProjectIds = new Set(
+    requests
+      .filter((item) => ["pending", "accepted", "TLAssign"].includes(item.status || ""))
+      .map((item) => '' + item.project_id)
+  );
 
-    setTotalUnreadActive(
-      Array.from(activeIds).reduce((sum, id) => {
-        const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-        return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-      }, 0)
-    );
+  const completedProjectIds = new Set(
+    projectDetails
+      .filter((item: ProjectListProps) => item.status === "Completed")
+      .map((item: ProjectListProps) => String(item.project_id))
+  );
 
-    setTotalUnreadOngoing(
-      Array.from(ongoingIds).reduce((sum, id) => {
-        const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-        return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-      }, 0)
-    );
+  const ongoingIds = new Set(
+    requests
+      .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
+      .map((item) => '' + item.project_id)
+      .filter((id) => !completedProjectIds.has(id))
+  );
 
-    setTotalUnreadRequests(
-      Array.from(pendingIds).reduce((sum, id) => {
-        const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-        return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-      }, 0)
-    );
-  }, [unreadInfo, requests, projectDetails]);
+  const pendingIds = new Set(
+    requests
+      .filter((item) => item.status === "pending")
+      .map((item) => '' + item.project_id)
+  );
+
+  const activeIds = new Set(
+    projectDetails
+      .filter((p) => p.status === "Active" && !requestedProjectIds.has('' + p.project_id))
+      .map((p) => '' + p.project_id)
+  );
+
+  const assignedIds = new Set(
+    requests
+      .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
+      .map((item) => '' + item.project_id)
+      .filter((id) => !completedProjectIds.has(id))
+  );
+
+  setTotalUnreadActive(
+    Array.from(activeIds).reduce((sum, id) => {
+      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
+      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
+    }, 0)
+  );
+
+  setTotalUnreadOngoing(
+    Array.from(ongoingIds).reduce((sum, id) => {
+      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
+      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
+    }, 0)
+  );
+
+  setTotalUnreadRequests(
+    Array.from(pendingIds).reduce((sum, id) => {
+      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
+      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
+    }, 0)
+  );
+
+  setTotalUnreadAssigned(
+    Array.from(assignedIds).reduce((sum, id) => {
+      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
+      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
+    }, 0)
+  );
+}, [unreadInfo, requests, projectDetails]);
 
   useEffect(() => {
     const requestedProjectIds = new Set(
@@ -421,11 +446,7 @@ useEffect(() => {
     );
 
     // Completed projects → their unread count is forced to 0 everywhere
-    const completedProjectIds = new Set(
-      projectDetails
-        .filter((item: ProjectListProps) => item.status === "Completed")
-        .map((item: ProjectListProps) => String(item.project_id))
-    );
+   
 
     const ongoingIds = new Set(
       requests
@@ -745,10 +766,10 @@ useEffect(() => {
 
   // Listen for project status updates
   useEffect(() => {
-    const handleProjectStatusUpdate = (data: { projectId: string; status: string }) => {
+    const handleProjectStatusUpdate = (data: { projectId: string; status: string; active_date?: string | null }) => {
       setProjectDetails((prev) =>
         prev.map((p) =>
-          p.project_id === data.projectId ? { ...p, status: data.status } : p
+          p.project_id === data.projectId ? { ...p, status: data.status, active_date: data.active_date ?? p.active_date } : p
         )
       );
     };
@@ -822,7 +843,7 @@ useEffect(() => {
         const saved = localStorage.getItem("tlLandingActiveTab");
         setActiveTab(saved && savedTabs.includes(saved) ? saved : "SOP List");
       } else {
-        const savedTabs = ["Active", "Requests", "On-Going", "Completed", "Verify Employee"];
+        const savedTabs = ["Active", "Assigned", "Requests", "On-Going", "Completed", "Verify Employee"];
         setTabs(savedTabs);
         const saved = localStorage.getItem("tlLandingActiveTab");
         setActiveTab(saved && savedTabs.includes(saved) ? saved : "Requests");
@@ -969,13 +990,87 @@ useEffect(() => {
       .map((item: ProjectListProps) => String(item.project_id))
   );
 
-  const filteredItems =
-    department === "Technical"
-      ? activeTab === "Active"
-        ? projectDetails.filter(
-          (item: ProjectListProps) =>
-            item.status === "Active" &&
-            !requestedProjectIds.has(String(item.project_id)) &&
+const filteredItems =
+  department === "Technical"
+    ? activeTab === "Active"
+      ? projectDetails.filter((item: ProjectListProps) =>
+          item.status === "Active" &&
+          (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.project_id.toString().includes(searchQuery) ||
+            item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (typeof item.description === "string" &&
+              item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
+          (selectedFilters.length === 0 ||
+            selectedFilters.some((filter) =>
+              filter.toLowerCase().includes(item.workstream.toLowerCase())
+            ))
+        )
+      : activeTab === "Assigned"
+        ? Object.values(groupedOngoingRequests)
+            .filter((item: GroupedRequestProps) =>
+              !completedProjectIds.has(String(item.project_id)) &&
+              (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.project_id.toString().includes(searchQuery) ||
+                item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.employees.some((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
+              (selectedFilters.length === 0 ||
+                selectedFilters.some((filter) =>
+                  filter.toLowerCase().includes(item.workstream.toLowerCase())
+                ))
+            )
+            .map((item: GroupedRequestProps) => {
+  const proj = projectDetails.find(p => String(p.project_id) === String(item.project_id));
+  return {
+    ...item,
+    assignedEmployees: item.employees.map((emp) => emp.name).join(", "),
+    active_date: proj?.active_date || null,
+    status: proj?.status || item.status,
+  } as ProjectWithEmployees;
+})
+      : activeTab === "Requests"
+        ? Object.values({
+            ...groupedPendingRequests,
+            ...groupedOngoingRequests, // ← Now shows pending + assigned/accepted requests
+          }).filter((item: GroupedRequestProps) =>
+            (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              item.project_id.toString().includes(searchQuery) ||
+              item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              item.employees.some((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
+            (selectedFilters.length === 0 ||
+              selectedFilters.some((filter) =>
+                filter.toLowerCase().includes(item.workstream.toLowerCase())
+              ))
+          )
+      : activeTab === "On-Going"
+        ? Object.values(groupedOngoingRequests)
+            .filter((item: GroupedRequestProps) =>
+              !completedProjectIds.has(String(item.project_id)) &&
+              (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.project_id.toString().includes(searchQuery) ||
+                item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.employees.some((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
+              (selectedFilters.length === 0 ||
+                selectedFilters.some((filter) =>
+                  filter.toLowerCase().includes(item.workstream.toLowerCase())
+                ))
+            )
+            .map((item: GroupedRequestProps) => {
+              const proj = projectDetails.find(p => String(p.project_id) === String(item.project_id));
+              return {
+                ...item,
+                assignedEmployees: item.employees.map((emp) => emp.name).join(", "),
+                active_date: proj?.active_date || null,
+                status: proj?.status || item.status,
+              } as ProjectWithEmployees;
+            })
+      : activeTab === "Completed"
+        ? projectDetails.filter((item: ProjectListProps) =>
+            item.status === "Completed" &&
             (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
               item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
               item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -987,60 +1082,29 @@ useEffect(() => {
               selectedFilters.some((filter) =>
                 filter.toLowerCase().includes(item.workstream.toLowerCase())
               ))
-        )
-        : activeTab === "Requests"
-          ? Object.values(groupedPendingRequests).filter((item: GroupedRequestProps) =>
+          )
+      : activeTab === "Verify Employee"
+        ? filteredEmployeeRequests
+        : []
+    : department === "Sales"
+      ? activeTab === "SOP List"
+        ? projectDetails.filter((item: ProjectListProps) =>
+            item.status !== "Completed" &&
             (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
               item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
               item.project_id.toString().includes(searchQuery) ||
               item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.employees.some(emp => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
+              (typeof item.description === "string" &&
+                item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
             (selectedFilters.length === 0 ||
               selectedFilters.some((filter) =>
                 filter.toLowerCase().includes(item.workstream.toLowerCase())
               ))
           )
-          : activeTab === "On-Going"
-            ? Object.values(groupedOngoingRequests).filter((item: GroupedRequestProps) =>
-              // NEW: Exclude any project that has "Completed" status (mirroring the Active tab logic)
-              !completedProjectIds.has(String(item.project_id)) &&
-              (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.project_id.toString().includes(searchQuery) ||
-                item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.employees.some(emp => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-              (selectedFilters.length === 0 ||
-                selectedFilters.some((filter) =>
-                  filter.toLowerCase().includes(item.workstream.toLowerCase())
-                ))
-            ).map((item: GroupedRequestProps) => ({
-              ...item,
-              assignedEmployees: item.employees.map(emp => emp.name).join(", ")
-            }) as ProjectWithEmployees)
-            : activeTab === "Completed"
-              ? projectDetails.filter(
-                (item: ProjectListProps) =>
-                  item.status === "Completed" &&
-                  (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.project_id.toString().includes(searchQuery) ||
-                    item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    (typeof item.description === "string" &&
-                      item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-                  (selectedFilters.length === 0 ||
-                    selectedFilters.some((filter) =>
-                      filter.toLowerCase().includes(item.workstream.toLowerCase())
-                    ))
-              )
-              : activeTab === "Verify Employee"
-                ? filteredEmployeeRequests
-                : []
-      : department === "Sales"
-        ? activeTab === "SOP List"
-          ? projectDetails.filter(
-            (item: ProjectListProps) =>
-              item.status !== "Completed" &&
+        : activeTab === "Active"
+          ? projectDetails.filter((item: ProjectListProps) =>
+              item.status === "Active" &&
               (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1052,11 +1116,10 @@ useEffect(() => {
                 selectedFilters.some((filter) =>
                   filter.toLowerCase().includes(item.workstream.toLowerCase())
                 ))
-          )
-          : activeTab === "Active"
-            ? projectDetails.filter(
-              (item: ProjectListProps) =>
-                item.status === "Active" &&
+            )
+          : activeTab === "Completed"
+            ? projectDetails.filter((item: ProjectListProps) =>
+                item.status === "Completed" &&
                 (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
                   item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                   item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1068,25 +1131,9 @@ useEffect(() => {
                   selectedFilters.some((filter) =>
                     filter.toLowerCase().includes(item.workstream.toLowerCase())
                   ))
-            )
-            : activeTab === "Completed"
-              ? projectDetails.filter(
-                (item: ProjectListProps) =>
-                  item.status === "Completed" &&
-                  (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.project_id.toString().includes(searchQuery) ||
-                    item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    (typeof item.description === "string" &&
-                      item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-                  (selectedFilters.length === 0 ||
-                    selectedFilters.some((filter) =>
-                      filter.toLowerCase().includes(item.workstream.toLowerCase())
-                    ))
               )
-              : []
-        : [];
+            : []
+      : [];
 
   const totalPages = Math.max(
     1,
@@ -1306,17 +1353,18 @@ useEffect(() => {
               }`}
           >
             <div className={`w-full ${isXXS || isXS || isSM || isMD || department === "Technical" ? "" : "mr-[29%]"}`}>
-              <Navigation1
-                tabs={tabs}
-                activeTab={activeTab}
-                setActiveTab={(tab) => {
-                  setActiveTab(tab);
-                  localStorage.setItem("tlLandingActiveTab", tab);
-                }}
-                totalUnreadActive={totalUnreadActive}
-                totalUnreadOngoing={totalUnreadOngoing}
-                totalUnreadRequests={totalUnreadRequests}
-              />          </div>
+            <Navigation1
+  tabs={tabs}
+  activeTab={activeTab}
+  setActiveTab={(tab) => {
+    setActiveTab(tab);
+    localStorage.setItem("tlLandingActiveTab", tab);
+  }}
+  totalUnreadActive={totalUnreadActive}
+  totalUnreadOngoing={totalUnreadOngoing}
+  totalUnreadAssigned={totalUnreadAssigned}
+  totalUnreadRequests={totalUnreadRequests}
+/>         </div>
           </div>
           <div className="overflow-x-auto">
             {department === "Technical" ? (
@@ -1353,15 +1401,30 @@ useEffect(() => {
                               {item.title}
                             </div>
                             <div
-                              className={`text-[#000000] font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                                } -tracking-[0.02rem]`}
-                            >
-                             Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                            </div>
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {(item as any).active_date && (item as any).status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                             <div className="flex w-[30%] items-center justify-center">
                               {displayEmployees.map((emp, idx) => {
                                 const randomColor = `#${Math.floor(Math.random() * 16777215).toString(16)}`;
@@ -1455,16 +1518,31 @@ useEffect(() => {
                           >
                             {item.title}
                           </div>
-                          <div
-                            className={`text-[#000000] font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                              } -tracking-[0.02rem]`}
-                          >
-                           Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                          </div>
+                         <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {(item as any).active_date && (item as any).status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                           <div
                             className={`text-[#000000]  w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
                           >
@@ -1574,6 +1652,150 @@ useEffect(() => {
 
                   </div>
                 )
+                ) : activeTab === "Assigned" ? (
+  filteredItems.length > 0 ? (
+    currentItems.map((item, index) => {
+      if ("assignedEmployees" in item) {
+        const projectItem = item as ProjectWithEmployees;
+        const employeeNames = projectItem.assignedEmployees?.split(", ") || [];
+        const firstEmployee = employeeNames[0] || "N/A";
+        const extraCount = employeeNames.length - 1;
+
+        const unreadInfoForProject = unreadInfo[projectItem.project_id] || {
+          unreadFromHead: 0,
+          unreadFromClient: 0,
+          unreadFromMonitor: 0,
+          hasMentionFromHead: false,
+          hasMentionFromClient: false,
+          headName: "Head",
+          clientName: "Client",
+          monitorName: "Employee",
+        };
+
+        const hasAnyUnreadOrMention =
+          unreadInfoForProject.unreadFromHead > 0 ||
+          unreadInfoForProject.unreadFromClient > 0 ||
+          unreadInfoForProject.unreadFromMonitor > 0 ||
+          unreadInfoForProject.hasMentionFromHead ||
+          unreadInfoForProject.hasMentionFromClient;
+
+        return (
+          <div
+            key={index}
+            className={`flex relative ${hasAnyUnreadOrMention ? "pb-20" : ""} justify-start items-start ${
+              index === currentItems.length - 1 ? "mt-7" : "my-7"
+            } w-full min-w-[700px] flex-col`}
+          >
+            <div className="flex flex-col-reverse items-start justify-start w-full">
+              <div className="flex items-start justify-between w-full">
+                <Button1
+                  gradientType="gradient1"
+                  width={widthClass}
+                  text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
+                  value={projectItem.workstream}
+                />
+                <div className="flex items-center space-x-3">
+                  <div
+                    className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center bg-blue-600 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+                    style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+                    onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item: projectItem } })}
+                  >
+                    Talk to Client/Head
+                  </div>
+
+                  <div
+                    className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center bg-slate-700 text-xs font-medium text-white transition-colors hover:bg-slate-600"
+                    style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+                    onClick={() => navigate(`/teamleaderprojectinfo_withemployee`, { state: { item: projectItem } })}
+                  >
+                    Talk to Employee
+                  </div>
+                </div>
+              </div>
+              <div className="border-t-2 border-[#000000] w-full"></div>
+            </div>
+
+            <div className="flex mt-3 w-full pl-[2vw] justify-between items-center">
+              <div className={`text-[#000000] w-[35%] text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}>
+                {projectItem.title}
+              </div>
+              <div className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}>
+                <div>
+                  Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                </div>
+                {(projectItem as any).active_date && (projectItem as any).status === "Active" && (
+                  <div className="flex items-center gap-2 text-[12px] mt-1">
+                    <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+                    </div>
+                    <span className="text-emerald-700 font-medium tracking-tight">
+                      Active since {new Date((projectItem as any).active_date).toLocaleDateString("en-GB", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric"
+                      })}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}>
+                {extraCount > 0 ? (
+                  <>
+                    {firstEmployee}
+                    <span className="ml-1 px-2 py-1 rounded-full bg-gray-200 text-gray-700 text-[11px]">+{extraCount}</span>
+                  </>
+                ) : (
+                  firstEmployee
+                )}
+              </div>
+            </div>
+
+            {/* Notification badge (same as On-Going) */}
+            {hasAnyUnreadOrMention && !dismissedNotifications.has(projectItem.project_id) && (
+              <div className="absolute right-5 top-15 w-fit mt-2 z-50">
+                <div className="relative bg-blue-50 border border-blue-200 rounded-lg p-3 pr-8 shadow-md">
+                  <div className="absolute -top-[7px] left-[8px] w-0 h-0 border-l-[7px] border-r-[7px] border-b-[8px] border-l-transparent border-r-transparent border-b-blue-200"></div>
+                  <div className="absolute -top-[6px] left-[9px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[7px] border-l-transparent border-r-transparent border-b-blue-50"></div>
+
+                  <MdCancel
+                    size={22}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
+                    }}
+                    className="absolute top-1.5 right-1 text-gray-400 hover:text-red-500 hover:bg-red-100 rounded-full p-0.5 transition-all duration-200 cursor-pointer"
+                  />
+
+                  <div className="flex items-start space-x-3">
+                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 text-sm font-bold text-white bg-green-500 rounded-full">
+                      {(unreadInfoForProject.unreadFromHead || 0) + (unreadInfoForProject.unreadFromClient || 0) + (unreadInfoForProject.unreadFromMonitor || 0)}
+                    </span>
+                    <div className="flex flex-col space-y-1.5 text-xs">
+                      {unreadInfoForProject.hasMentionFromHead && <div className="text-blue-700">Head tagged you.</div>}
+                      {unreadInfoForProject.hasMentionFromClient && <div className="text-blue-700">Client tagged you.</div>}
+                      {unreadInfoForProject.unreadFromHead > 0 && !unreadInfoForProject.hasMentionFromHead && <div>New message{unreadInfoForProject.unreadFromHead > 1 ? "s" : ""} from Head</div>}
+                      {unreadInfoForProject.unreadFromClient > 0 && !unreadInfoForProject.hasMentionFromClient && <div>New message{unreadInfoForProject.unreadFromClient > 1 ? "s" : ""} from Client</div>}
+                      {unreadInfoForProject.unreadFromMonitor > 0 && <div>New message{unreadInfoForProject.unreadFromMonitor > 1 ? "s" : ""} from Employee</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+      return null;
+    })
+  ) : (
+    <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+      <div className="bg-white p-3 rounded-full shadow-sm mb-4">
+        <MdFolderOff color="gray" size={40} />
+      </div>
+      <p className="text-gray-900 font-medium text-[15px]">No Assigned projects found</p>
+      <p className="text-gray-500 text-[13px] mt-1 mb-5">Check filters or move to another tab</p>
+    </div>
+  )
+                // here need to paste the Assigned code?
               ) : activeTab === "On-Going" ? (
                 filteredItems.length > 0 ? (
                   currentItems.map((item, index) => {
@@ -1634,16 +1856,31 @@ useEffect(() => {
                             >
                               {projectItem.title}
                             </div>
-                            <div
-                              className={`text-[#000000] font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                                } -tracking-[0.02rem]`}
-                            >
-                              Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                            </div>
+                           <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {projectItem.active_date && projectItem.status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                             <div
                               className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}
                             >
@@ -1910,16 +2147,31 @@ useEffect(() => {
                             >
                               {projectItem.title}
                             </div>
-                            <div
-                              className={`text-gray-600 font-normal flex justify-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                                } -tracking-[0.02rem]`}
-                            >
-                              Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                            </div>
+                          <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {projectItem.active_date && projectItem.status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                             <div
                               className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
                             >
@@ -1988,16 +2240,31 @@ useEffect(() => {
                           >
                             {item.title}
                           </div>
-                          <div
-                            className={`text-[#000000] font-normal flex justify-center w-[25%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                              } -tracking-[0.02rem]`}
-                          >
-                            Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                          </div>
+                         <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[25%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {(item as any).active_date && (item as any).status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                           <div
                             className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
                           >
@@ -2098,16 +2365,31 @@ useEffect(() => {
                             >
                               {projectItem.title}
                             </div>
-                            <div
-                              className={`text-[#000000] font-normal flex justify-center w-[30%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                                } -tracking-[0.02rem]`}
-                            >
-                              Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-                                day: "2-digit",
-                                month: "2-digit",
-                                year: "numeric"
-                              })}
-                            </div>
+                           <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {projectItem.active_date && projectItem.status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                             <div
                               className={`text-[#000000] w-[20%] font-normal text-[12px] -tracking-[0.02rem]`}
                             >
@@ -2219,16 +2501,31 @@ useEffect(() => {
                               >
                                 {projectItem.title}
                               </div>
-                              <div
-                                className={`text-gray-600 font-normal flex justify-center w-[25%] ${is2XL ? "text-[15px]" : "text-[12px]"
-                                  } -tracking-[0.02rem]`}
-                              >
-                                Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric"
-})}
-                              </div>
+                            <div
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+>
+  <div>
+    Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    })}
+  </div>
+  {projectItem.active_date && projectItem.status === "Active" && (
+    <div className="flex items-center gap-2 text-[12px] mt-1">
+      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
+      </div>
+      <span className="text-emerald-700 font-medium tracking-tight">
+        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })}
+      </span>
+    </div>
+  )}
+</div>
                               <div
                                 className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
                               >

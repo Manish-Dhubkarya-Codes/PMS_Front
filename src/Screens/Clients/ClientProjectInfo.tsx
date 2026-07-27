@@ -117,6 +117,14 @@ const ClientProjectInfo: React.FC<ClientProjectInfoProps> = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessageProps[]>([]);
   const [newMessage, setNewMessage] = useState<string>("");
   const [isChatEnabled, setIsChatEnabled] = useState<boolean>(false);
+  // Add these near the top with other states
+const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
+const isWithinEditWindow = (msg: ChatMessageProps): boolean => {
+  if (!msg.timestamp) return false;
+  const sent = new Date(msg.timestamp).getTime();
+  return Date.now() - sent < 2 * 60 * 1000; // 2 minutes
+};
+
   const [selectedFiles, setSelectedFiles] = useState<
     { name: string; url: string; type: string; blob?: Blob }[]
   >([]);
@@ -152,9 +160,14 @@ const ClientProjectInfo: React.FC<ClientProjectInfoProps> = () => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const isCompleted = initialProjectDetails?.status === "Completed";
+  const [projectStatus, setProjectStatus] = useState<string>(
+  initialProjectDetails?.status || ""
+);
+
+const isCompleted = projectStatus === "Completed";
+const isChatDisabled = projectStatus === "Completed" || projectStatus === "Hold";
   const [progress, setProgress] = useState({ start: 'no', payment: '0%', work: '0%' });
-  // NEW: Edit / Delete states
+  // NEW: edit / Delete states
   const [editingMessage, setEditingMessage] = useState<ChatMessageProps | null>(null);
   const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null); // which message shows the 3-dot menu
   const navigate = useNavigate();
@@ -216,65 +229,94 @@ const ClientProjectInfo: React.FC<ClientProjectInfoProps> = () => {
     });
   };
 
-  // NEW: Edit handler
-  const handleEditMessage = (msg: ChatMessageProps) => {
-    if (msg.type !== "text") return;
-    setEditingMessage(msg);
-    setNewMessage(msg.message || "");
-    inputRef.current?.focus();
-    setMessageMenuIndex(null); // close menu
-  };
+  // NEW: edit handler
+const handleEditMessage = (msg: ChatMessageProps) => {
+  if (msg.type !== "text") return;
 
-  const handleDeleteMessage = async (msg: ChatMessageProps) => {
-    if (!projectId || !socket || !connected) return;
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 2500);
     setMessageMenuIndex(null);
+    return;
+  }
 
-    const timestamp = new Date().toISOString();
+  setEditingMessage(msg);
+  setNewMessage(msg.message || "");
+  inputRef.current?.focus();
+  setMessageMenuIndex(null);
+};
 
-    // Optimistic update — match by timestamp
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.timestamp === msg.timestamp
-          ? { ...m, isDeleted: true, deletedAt: timestamp, message: undefined, file: undefined }
-          : m
-      )
-    );
+const handleDeleteMessage = async (msg: ChatMessageProps) => {
+  if (!projectId || !socket || !connected) return;
+  setMessageMenuIndex(null);
 
-    // ✅ FIX: use msg.id (real DB index), not the map() index from displayedMessages
-    socket.emit("deleteClientMessage", {
-      projectId,
-      index: msg.id,
-      timestamp,
-    });
+  if (!isWithinEditWindow(msg)) {
+    setShowTimeLimitPopup(true);
+    setTimeout(() => setShowTimeLimitPopup(false), 2500);
+    return;
+  }
+
+  // Optimistic
+  setChatMessages((prev) =>
+    prev.map((m) =>
+      m.timestamp === msg.timestamp
+        ? { ...m, isDeleted: true, deletedAt: new Date().toISOString(), message: undefined, file: undefined }
+        : m
+    )
+  );
+
+  // ✅ Pass ORIGINAL timestamp + real index
+  socket.emit("deleteClientMessage", {
+    projectId,
+    index: msg.id,                    // real DB index
+    timestamp: msg.timestamp,         // ← ORIGINAL message timestamp (critical)
+  });
+};
+
+const sendEditedMessage = async () => {
+  if (!editingMessage || !projectId || !socket || !connected) return;
+
+  const editedAt = new Date().toISOString();
+
+  // Optimistic
+  setChatMessages((prev) =>
+    prev.map((m) =>
+      m.timestamp === editingMessage.timestamp
+        ? { ...m, message: newMessage.trim(), edited: true, editedAt }
+        : m
+    )
+  );
+
+  // ✅ Pass ORIGINAL timestamp
+  socket.emit("editClientMessage", {
+    projectId,
+    index: editingMessage.id,
+    newText: newMessage.trim(),
+    timestamp: editingMessage.timestamp,   // ← ORIGINAL (not new Date())
+  });
+
+  setEditingMessage(null);
+  setNewMessage("");
+};
+
+
+useEffect(() => {
+  if (!socket || !projectId) return;
+
+  // Join the project room so we can receive status updates
+  socket.emit("joinProject", projectId);
+
+  const handleProjectStatusUpdated = (data: { projectId: string | number; status: string }) => {
+    if (String(data.projectId) !== String(projectId)) return;
+    setProjectStatus(data.status);
   };
 
-  const sendEditedMessage = async () => {
-    if (!editingMessage || !projectId || !socket || !connected) return;
+  socket.on("projectStatusUpdated", handleProjectStatusUpdated);
 
-    const timestamp = new Date().toISOString();
-
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.timestamp === editingMessage.timestamp
-          ? { ...m, message: newMessage.trim(), edited: true, editedAt: timestamp }
-          : m
-      )
-    );
-
-    // ✅ FIX: always use editingMessage.id (real DB index)
-    socket.emit("editClientMessage", {
-      projectId,
-      index: editingMessage.id,
-      newText: newMessage.trim(),
-      timestamp,
-    });
-
-    setEditingMessage(null);
-    setNewMessage("");
+  return () => {
+    socket.off("projectStatusUpdated", handleProjectStatusUpdated);
   };
-
-
-
+}, [socket, projectId]);
   // Added handleClickOnReplyBubble
   const handleClickOnReplyBubble = (reply: ReplyMessage) => {
     const repliedMsg = chatMessages.find(
@@ -727,6 +769,8 @@ const fetchProjectData = async (projId: string, isPolling = false) => {
       setTitle(project.title || "");
       setSubmissionDate(project.deadline || "");
       setBudget(project.budget || "");
+      setProjectStatus(project.status || "");
+console.log("STATUS FROM FETCH →", project.status);
 
       // ==================== IMPROVED DESCRIPTION PARSING ====================
       let initialDesc = "";
@@ -756,106 +800,111 @@ const fetchProjectData = async (projId: string, isPolling = false) => {
 
       let newMessages: ChatMessageProps[] = [];
 
-      const parseSection = (
-        chats: string[] | undefined,
-        audios: string[] | undefined,
-        fromClient: boolean,
-        fromHead: boolean,
-        fromTeamLeader: boolean
-      ) => {
-        const messages: ChatMessageProps[] = [];
-        const max = Math.max(chats?.length || 0, audios?.length || 0);
+const parseSection = (
+  chats: string[] | undefined,
+  audios: string[] | undefined,
+  fromClient: boolean,
+  fromHead: boolean,
+  fromTeamLeader: boolean
+) => {
+  const messages: ChatMessageProps[] = [];
+  const max = Math.max(chats?.length || 0, audios?.length || 0);
 
-        for (let i = 0; i < max; i++) {
-          // === CHATS column ===
-          if (i < (chats?.length || 0)) {
-            const chatStr = chats![i];
-            if (typeof chatStr === "string") {
-              try {
-                const parsed = JSON.parse(chatStr);
-                let timestamp = parsed.timestamp;
-                if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-                  timestamp = new Date().toISOString();
-                }
-
-                const msg: ChatMessageProps = {
-                  type: parsed.type === "text" ? "text" : "file",
-                  isLeft: !fromClient,
-                  fromClient,
-                  fromHead,
-                  fromTeamLeader,
-                  timestamp,
-                  seen_by: parsed.seen_by || [],
-                  id: i,
-                  mention: parsed.mention || null,
-                  replyTo: parsed.replyTo || null,
-                  isDeleted: parsed.isDeleted || false,
-                  deletedAt: parsed.deletedAt || undefined,
-                  edited: parsed.edited || false,
-                  editedAt: parsed.editedAt || undefined,
-                  caption: parsed.caption || undefined,
-                };
-
-                if (!parsed.isDeleted) {
-                  if (parsed.type === "text") {
-                    msg.message = parsed.data;
-                  } else if (parsed.data?.name && parsed.data?.url) {
-                    msg.file = {
-                      name: parsed.data.name,
-                      url: `${serverURL}${parsed.data.url}`,
-                      type: parsed.data.type,
-                    };
-                  }
-                }
-                messages.push(msg);
-              } catch (error) {
-                console.error("Error parsing chat:", error);
-              }
-            }
+  for (let i = 0; i < max; i++) {
+    // === CHATS ===
+    if (i < (chats?.length || 0)) {
+      let chatStr = chats![i];
+      if (typeof chatStr === "string") {
+        try {
+          // Handle double-stringified data
+          let parsed = JSON.parse(chatStr);
+          if (typeof parsed === "string") {
+            parsed = JSON.parse(parsed); // second parse if double-stringified
           }
 
-          // === AUDIOS column ===
-          if (i < (audios?.length || 0)) {
-            const audioStr = audios![i];
-            try {
-              const parsed = JSON.parse(audioStr);
-              let timestamp = parsed.timestamp;
-              if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-                timestamp = new Date().toISOString();
-              }
+          const timestamp = parsed.timestamp || new Date().toISOString();
+          const isDeleted = parsed.isDeleted === true;
 
-              const msg: ChatMessageProps = {
-                type: "file",
-                isLeft: !fromClient,
-                fromClient,
-                fromHead,
-                fromTeamLeader,
-                file: parsed.data?.name && parsed.data?.url
-                  ? {
-                      name: parsed.data.name,
-                      url: `${serverURL}${parsed.data.url}`,
-                      type: parsed.data.type,
-                    }
-                  : undefined,
-                timestamp,
-                seen_by: parsed.seen_by || [],
-                id: i,
-                mention: parsed.mention || null,
-                replyTo: parsed.replyTo || null,
-                isDeleted: parsed.isDeleted || false,
-                deletedAt: parsed.deletedAt || undefined,
-                edited: parsed.edited || false,
-                editedAt: parsed.editedAt || undefined,
-                caption: parsed.caption || undefined,
+          const msg: ChatMessageProps = {
+            type: parsed.type === "text" ? "text" : "file",
+            isLeft: !fromClient,
+            fromClient,
+            fromHead,
+            fromTeamLeader,
+            timestamp,
+            seen_by: parsed.seen_by || [],
+            id: i,
+            mention: parsed.mention || null,
+            replyTo: parsed.replyTo || null,
+            isDeleted,
+            deletedAt: parsed.deletedAt,
+            edited: parsed.edited || false,
+            editedAt: parsed.editedAt,
+            caption: parsed.caption,
+          };
+
+          if (!isDeleted) {
+            if (parsed.type === "text") {
+              msg.message = parsed.data;
+            } else if (parsed.data?.name && parsed.data?.url) {
+              msg.file = {
+                name: parsed.data.name,
+                url: `${serverURL}${parsed.data.url}`,
+                type: parsed.data.type,
               };
-              messages.push(msg);
-            } catch (e) {
-              console.error("Error parsing audio/file:", e);
             }
           }
+          messages.push(msg);
+        } catch (e) {
+          console.error("Error parsing chat:", e);
         }
-        return messages;
-      };
+      }
+    }
+
+    // === AUDIOS (same defensive parsing) ===
+    if (i < (audios?.length || 0)) {
+      let audioStr = audios![i];
+      if (typeof audioStr === "string") {
+        try {
+          let parsed = JSON.parse(audioStr);
+          if (typeof parsed === "string") parsed = JSON.parse(parsed);
+
+          const timestamp = parsed.timestamp || new Date().toISOString();
+          const isDeleted = parsed.isDeleted === true;
+
+          const msg: ChatMessageProps = {
+            type: "file",
+            isLeft: !fromClient,
+            fromClient,
+            fromHead,
+            fromTeamLeader,
+            timestamp,
+            seen_by: parsed.seen_by || [],
+            id: i,
+            mention: parsed.mention || null,
+            replyTo: parsed.replyTo || null,
+            isDeleted,
+            deletedAt: parsed.deletedAt,
+            edited: parsed.edited || false,
+            editedAt: parsed.editedAt,
+            caption: parsed.caption,
+            file: !isDeleted && parsed.data?.name && parsed.data?.url
+              ? {
+                  name: parsed.data.name,
+                  url: `${serverURL}${parsed.data.url}`,
+                  type: parsed.data.type,
+                }
+              : undefined,
+          };
+          messages.push(msg);
+        } catch (e) {
+          console.error("Error parsing audio:", e);
+        }
+      }
+    }
+  }
+  return messages;
+};
 
       const clientMsgs = parseSection(
         project.clientchats,
@@ -1021,118 +1070,217 @@ const fetchProjectData = async (projId: string, isPolling = false) => {
     }
   }, [socket, connected, projectId]);
 
-  useEffect(() => {
-    if (!socket) return;
+useEffect(() => {
+  if (!socket) return;
 
-    onEvent("newMessage", (data: { fromRole: string; msg: any }) => {
-      const { fromRole, msg: incoming } = data;
-      setChatMessages((prev) => {
-        const isDuplicate = prev.some(
-          (m) =>
-            m.timestamp === incoming.timestamp &&
-            ((m.type === "text" && m.message === incoming.data) ||
-              (m.type === "file" && m.file?.name === incoming.data?.name))
-        );
-        if (isDuplicate) return prev;
+  onEvent("newMessage", (data: { fromRole: string; msg: any }) => {
+    const { fromRole, msg: incoming } = data;
 
-        const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
-        if (existingIndex !== -1) {
-          const updated = [...prev];
-          updated[existingIndex] = { ...updated[existingIndex], id: incoming.id, tempId: undefined };
-          return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        }
+    setChatMessages((prev) => {
+      // 1. Duplicate check
+      const isDuplicate = prev.some(
+        (m) =>
+          m.timestamp === incoming.timestamp &&
+          ((m.type === "text" && m.message === incoming.data) ||
+            (m.type === "file" && m.file?.name === incoming.data?.name))
+      );
+      if (isDuplicate) return prev;
 
-        const fromClient = fromRole === "client";
-        const fromHead = fromRole === "head";
-        const fromTeamLeader = fromRole === "tl";
-        const newMsg: ChatMessageProps = {
-          type: incoming.type === "text" ? "text" : "file",
-          isLeft: !fromClient,
-          fromClient,
-          fromHead,
-          fromTeamLeader,
-          timestamp: incoming.timestamp,
-          seen_by: incoming.seen_by,
+      // 2. Optimistic → real ID upgrade
+      const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
+      if (existingIndex !== -1) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
           id: incoming.id,
-          mention: incoming.mention,
-          replyTo: incoming.replyTo,
+          caption: updated[existingIndex].caption || incoming.caption || undefined,
+          tempId: undefined,
         };
-        if (incoming.type === "text") {
-          newMsg.message = incoming.data;
-        } else {
-          newMsg.file = {
-            name: incoming.data.name,
-            url: `${serverURL}${incoming.data.url}`,
-            type: incoming.data.type,
-          };
-        }
-        return [...prev, newMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      });
-      playNotification();
+        return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
+
+      // 3. Brand new message
+      const fromClient = fromRole === "client";
+      const fromHead = fromRole === "head";
+      const fromTeamLeader = fromRole === "tl";
+
+      // ✅ CRITICAL FIX for Client view
+      const isLeft = fromHead || fromTeamLeader;   // own messages → right side
+
+      const newMsg: ChatMessageProps = {
+        type: incoming.type === "text" ? "text" : "file",
+        isLeft,
+        fromClient,
+        fromHead,
+        fromTeamLeader,
+        timestamp: incoming.timestamp,
+        seen_by: incoming.seen_by || [],
+        id: incoming.id,
+        mention: incoming.mention || null,
+        replyTo: incoming.replyTo
+          ? {
+              id: incoming.replyTo.id,
+              sender: incoming.replyTo.sender,
+              content: incoming.replyTo.content,
+              type: incoming.replyTo.type,
+              timestamp: incoming.replyTo.timestamp,
+            }
+          : null,
+        caption: incoming.caption || undefined,
+      };
+
+      if (incoming.type === "text") {
+        newMsg.message = incoming.data;
+      } else {
+        newMsg.file = {
+          name: incoming.data.name,
+          url: `${serverURL}${incoming.data.url}`,
+          type: incoming.data.type,
+        };
+      }
+
+      return [...prev, newMsg].sort((a, b) =>
+        a.timestamp.localeCompare(b.timestamp)
+      );
     });
 
-    onEvent(
-      "messageSeen",
-      (data: { fromRole: string; index: number; seen_by: string[]; timestamp?: string }) => {
-        const { fromRole, index, seen_by, timestamp } = data;
-        setChatMessages((prev) => {
-          const fromClient = fromRole === "client";
-          const fromHead = fromRole === "head";
-          const fromTeamLeader = fromRole === "tl";
-          return prev.map((m) =>
-            (m.timestamp === timestamp &&
-              m.fromClient === fromClient &&
-              m.fromHead === fromHead &&
-              m.fromTeamLeader === fromTeamLeader) ||
-              (m.id === index &&
-                ((fromRole === "client" && m.fromClient) ||
-                  (fromRole === "head" && m.fromHead) ||
-                  (fromRole === "tl" && m.fromTeamLeader)))
-              ? { ...m, seen_by }
-              : m
-          );
-        });
-      }
-    );
+    playNotification();
+  });
+}, [socket, playNotification, onEvent]);
 
-    // ✅ FIX: now inside if(!socket) guard
-    onEvent(
-      "clientMessageEdited",
-      (data: { projectId: string; index: number; updatedMsg: any }) => {
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.timestamp === data.updatedMsg.timestamp || m.id === data.index
-              ? {
-                ...m,
-                message: data.updatedMsg.data, // ✅ FIX: server sends `data`, map to `message`
-                edited: true,
-                editedAt: data.updatedMsg.editedAt,
-              }
-              : m
-          )
-        );
-      }
-    );
+// === FINAL: Live edit/delete for Client + Head + TL (All in one clean block) ===
+useEffect(() => {
+  if (!socket || !projectId) return;
 
-    onEvent(
-      "clientMessageDeleted",
-      (data: { projectId: string; index: number; updatedMsg: any }) => {
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.timestamp === data.updatedMsg.timestamp || m.id === data.index
-              ? {
-                ...m,
-                isDeleted: true,
-                deletedAt: data.updatedMsg.deletedAt,
-                message: undefined, // ✅ FIX: explicitly clear
-                file: undefined,
-              }
-              : m
-          )
-        );
+const handleClientEdited = (data: any) => {
+  if (data.projectId !== projectId) return;
+  setChatMessages((prev) =>
+    prev.map((m) => {
+      const idMatch = m.id === data.index;
+      const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+      if ((idMatch || timeMatch) && m.fromClient) {
+        return {
+          ...m,
+          message: data.newData,           // ← use newData (not updatedMsg.data)
+          edited: true,
+          editedAt: data.editedAt,
+        };
       }
+      return m;
+    })
+  );
+};
+
+  const handleClientDeleted = (data: any) => {
+    if (data.projectId !== projectId) return;
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromClient) {
+          return {
+            ...m,
+            isDeleted: true,
+            deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          };
+        }
+        return m;
+      })
     );
-  }, [socket, playNotification]);
+  };
+
+  // Head messages
+  const handleHeadEdited = (data: any) => {
+    if (data.projectId !== projectId) return;
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromHead) {
+          return { ...m, message: data.newData, edited: true, editedAt: data.editedAt };
+        }
+        return m;
+      })
+    );
+  };
+
+  const handleHeadDeleted = (data: any) => {
+    if (data.projectId !== projectId) return;
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromHead) {
+          return {
+            ...m,
+            isDeleted: true,
+            deletedAt: data.deletedAt,
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          };
+        }
+        return m;
+      })
+    );
+  };
+
+  // TL messages
+  const handleTLEdited = (data: any) => {
+    if (data.projectId !== projectId) return;
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromTeamLeader) {
+          return { ...m, message: data.newData, edited: true, editedAt: data.editedAt };
+        }
+        return m;
+      })
+    );
+  };
+
+  const handleTLDeleted = (data: any) => {
+    if (data.projectId !== projectId) return;
+    setChatMessages((prev) =>
+      prev.map((m) => {
+        const idMatch = m.id === data.index;
+        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+        if ((idMatch || timeMatch) && m.fromTeamLeader) {
+          return {
+            ...m,
+            isDeleted: true,
+            deletedAt: data.deletedAt,
+            message: undefined,
+            file: undefined,
+            caption: undefined,
+          };
+        }
+        return m;
+      })
+    );
+  };
+
+  // Register listeners
+  socket.on("clientMessageEdited", handleClientEdited);
+  socket.on("clientMessageDeleted", handleClientDeleted);
+  socket.on("headMessageEdited", handleHeadEdited);
+  socket.on("headMessageDeleted", handleHeadDeleted);
+  socket.on("tlMessageEdited", handleTLEdited);
+  socket.on("tlMessageDeleted", handleTLDeleted);
+
+  return () => {
+    socket.off("clientMessageEdited", handleClientEdited);
+    socket.off("clientMessageDeleted", handleClientDeleted);
+    socket.off("headMessageEdited", handleHeadEdited);
+    socket.off("headMessageDeleted", handleHeadDeleted);
+    socket.off("tlMessageEdited", handleTLEdited);
+    socket.off("tlMessageDeleted", handleTLDeleted);
+  };
+}, [socket, projectId]);
 
   useEffect(() => {
     observer.current = new IntersectionObserver(
@@ -1178,6 +1326,50 @@ const fetchProjectData = async (projId: string, isPolling = false) => {
       });
     }
   }, [chatMessages]);
+
+  // === Client edit/delete listeners (FIXED) ===
+// Client edit / delete confirmations
+useEffect(() => {
+  if (!socket || !projectId) return;
+
+  const handleEdited = (data: any) => {
+    if (data.projectId !== projectId) return;
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        (m.id === data.index || m.timestamp === data.timestamp) && m.fromClient
+          ? { ...m, message: data.newData, edited: true, editedAt: data.editedAt }
+          : m
+      )
+    );
+  };
+
+  const handleDeleted = (data: any) => {
+    if (data.projectId !== projectId) return;
+    const ts = data.timestamp || data.updatedMsg?.timestamp;
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        (m.id === data.index || m.timestamp === ts) && m.fromClient
+          ? {
+              ...m,
+              isDeleted: true,
+              deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
+              message: undefined,
+              file: undefined,
+            }
+          : m
+      )
+    );
+  };
+
+  socket.on("clientMessageEdited", handleEdited);
+  socket.on("clientMessageDeleted", handleDeleted);
+
+  return () => {
+    socket.off("clientMessageEdited", handleEdited);
+    socket.off("clientMessageDeleted", handleDeleted);
+  };
+}, [socket, projectId]);
+
   const requiresPreview = (msg: ChatMessageProps) => {
     if (msg.type === "text") return false;
     if (!msg.file?.type) return false;
@@ -1392,6 +1584,8 @@ const fetchProjectData = async (projId: string, isPolling = false) => {
             setProjectId(newProjectId);
             setCurrentProjectId(newProjectId);
             setIsProjectSubmitted(true);
+            setProjectStatus(response.data.status || "");
+            console.log("STATUS FROM API →", response.data.status);
             setIsChatEnabled(true);
             await fetchProjectData(newProjectId, false);
           }
@@ -2237,7 +2431,7 @@ const handleSendMessage = async (
             </div>
             <div
               className={`w-full min-h-[300px] max-h-[550px] flex flex-col items-center justify-between  ${(isChatEnabled && !isCompleted)
-                  ? "bg-[#CFE3FF] pb-10 bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]  ring-1 ring-inset ring-cyan-100/50 text-slate-500 shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)] shadow-[#8A8A8A] rounded-[10px]"
+                  ? `bg-[#CFE3FF] pb-10 ${isChatDisabled ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}  ring-1 ring-inset ring-cyan-100/50 text-slate-500 shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)] shadow-[#8A8A8A] rounded-[10px]`
                   : "bg-[#dddddd] pb-5"
                 } rounded-[10px]`}
             >
@@ -2245,12 +2439,12 @@ const handleSendMessage = async (
                 <div
                   className="flex items-center w-fit rounded-md justify-center text-white"
                   style={{
-                    background: (isProjectSubmitted && !isCompleted)
-                      ? !(currentTab === "chat")
-                        ? "conic-gradient(from 0deg at 49.56% 50%, #011B40 0deg, #0348A6 360deg)"
-                        : "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
-                      : "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)",
-                  }}
+  background: isChatDisabled || !(isProjectSubmitted && !isCompleted)
+    ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
+    : currentTab === "chat"
+    ? "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
+    : "conic-gradient(from 0deg at 49.56% 50%, #011B40 0deg, #0348A6 360deg)",
+}}
                 >
                   <div
                     className={`flex ${is2XL ? "text-sm" : "text-xs"
@@ -2416,10 +2610,10 @@ const handleSendMessage = async (
                                   )}
 
                                   {msg.isDeleted ? (
-                                    <div className="text-gray-400 italic text-xs flex items-center gap-1">
-                                      <MdBlock size={14} />
-                                      {msg.fromClient ? "You deleted this message" : "This message was deleted"}
-                                    </div>
+  <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+    <MdBlock size={14} />
+    {msg.fromClient ? "You deleted this message" : "This message was deleted"}
+  </div>
                                   ) : (
                                     <>
                                       {msg.message && msg.type === "text" && (
@@ -2530,6 +2724,52 @@ const handleSendMessage = async (
     )}
   </div>
 )}
+                                  {/* 3-DOT MENU */}
+                                 {/* 3-DOT MENU - Only for own messages */}
+{/* ==================== 3-DOT MENU (Exact same as Head & TL) ==================== */}
+{!msg.isLeft && msg.fromClient && !msg.isDeleted && (
+  <div className="relative flex justify-end mt-1">
+    <div
+      className="cursor-pointer p-0.5 rounded-full hover:bg-gray-200 text-gray-400"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        setMessageMenuIndex(messageMenuIndex === index ? null : index);
+      }}
+    >
+      <BsThreeDotsVertical size={13} />
+    </div>
+
+    {/* Popover Menu - Same design as Head/TL */}
+    {messageMenuIndex === index && (
+      <div
+        className="absolute bottom-6 right-0 bg-white shadow-xl rounded-xl border border-gray-100 z-50 min-w-[110px] overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {msg.type === "text" && (
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditMessage(msg);
+            }}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 cursor-pointer"
+          >
+            <MdEdit size={15} className="text-blue-500" /> Edit
+          </div>
+        )}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDeleteMessage(msg);
+          }}
+          className="flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 cursor-pointer"
+        >
+          <MdDelete size={15} /> Delete
+        </div>
+      </div>
+    )}
+  </div>
+)}
 
                                       {msg.caption && (
                                         <div className="text-gray-800 text-[13px] mt-1.5 px-1 break-words leading-snug">
@@ -2553,43 +2793,7 @@ const handleSendMessage = async (
                                     </>
                                   )}
 
-                                  {/* 3-DOT MENU */}
-                                  {msg.fromClient && !msg.isDeleted && (
-                                    <div
-                                      className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer z-10"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setMessageMenuIndex(messageMenuIndex === index ? null : index);
-                                      }}
-                                    >
-                                      <div className="bg-white shadow-md hover:bg-red-50 rounded-full p-1 text-gray-500 hover:text-red-700"><BsThreeDotsVertical /></div>
-                                    </div>
-                                  )}
 
-                                  {/* MENU POPOVER */}
-                                  {messageMenuIndex === index && msg.fromClient && !msg.isDeleted && (
-                                    <div
-                                      className="absolute top-2 right-0 bg-white shadow-xl rounded-xl py-1 w-fit text-sm border border-gray-100"
-                                      onMouseDown={(e) => e.stopPropagation()}
-                                    >
-                                      {msg.type === "text" && (
-                                        <div
-                                          onClick={(e) => { e.stopPropagation(); handleEditMessage(msg); }}
-                                          className="px-4 py-2 hover:bg-gray-100 flex items-center gap-2 cursor-pointer"
-                                        >
-                                          <MdEdit size={16} />
-                                          <span>Edit</span>
-                                        </div>
-                                      )}
-                                      <div
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg); }}
-                                        className="px-4 py-2 hover:bg-red-50 text-red-600 flex items-center gap-2 cursor-pointer"
-                                      >
-                                        <MdDelete size={16} />
-                                        <span>Delete</span>
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
 
                               </div>
@@ -2707,7 +2911,7 @@ const handleSendMessage = async (
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   onSend={handleSendMessage}
-                  disabled={!isChatEnabled || isCompleted}
+                  disabled={!isChatEnabled || isChatDisabled}
                   placeholder={
                     isChatEnabled
                       ? "Type your message..."
@@ -2860,6 +3064,14 @@ const handleSendMessage = async (
           </div>
         </div>
       )}
+      {/* ─── 2-minute edit/delete time-limit popup ─── */}
+{showTimeLimitPopup && (
+  <div className="fixed bottom-[85px] left-1/2 -translate-x-1/2 z-[60]">
+    <div className="bg-gray-900/95 text-white text-[11px] font-medium px-4 py-1.5 rounded-full shadow-lg backdrop-blur-sm whitespace-nowrap">
+      ⏰ You can only edit/delete within 2 minutes
+    </div>
+  </div>
+)}
     </div>
   );
 };
