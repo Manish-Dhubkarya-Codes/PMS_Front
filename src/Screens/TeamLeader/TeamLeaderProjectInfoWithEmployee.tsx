@@ -219,6 +219,9 @@ const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
 const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
 const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
 
+console.log(showTimeLimitPopup);
+
+
 const isWithinEditWindow = (msg: ChatMessage): boolean => {
   if (!msg.timestamp) return false;
   return Date.now() - new Date(msg.timestamp).getTime() < 2 * 60 * 1000;

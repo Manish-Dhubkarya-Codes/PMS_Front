@@ -2,7 +2,7 @@
 
 import axios from "axios";
 
-const serverURL = import.meta.env.VITE_API_URL ;
+const serverURL = 'http://localhost:3000';
 console.log('🚀 Axios baseURL being used:', serverURL || '(empty = using Vite proxy)');
 // const ACCESS_TOKEN_LIFETIME = 15 * 60 * 1000; // 15 minutes in ms (fallback if no exp)
 // const REFRESH_TOKEN_LIFETIME = 7 * 24 * 60 * 60 * 1000; // 7 days in ms (fallback if no exp)

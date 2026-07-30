@@ -16,7 +16,7 @@ interface FormData {
   gender?: string;
   designation?: string;
   photo?: File | null;
-  role?: string;
+  role: string;
   securityKey?: string;
   clientSecurityKey?: string;
   identifier?: string;
@@ -574,9 +574,9 @@ const handleRequestReset = async () => {
                   <div onClick={handleRequestReset} className="text-blue-600 hover:text-blue-700 font-medium border-1 rounded-sm cursor-pointer px-3 py-1">Resend OTP</div>
                 </div>
                 {resetError && <p className="text-red-500 text-xs text-center mt-3">{resetError}</p>}
-                <div onClick={handleVerifyOtp} disabled={isLoading || resetOtp.length !== 6} className="mt-5 cursor-pointer w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-700 transition disabled:bg-blue-400 flex items-center justify-center gap-2">
+                <button type="button" onClick={handleVerifyOtp} disabled={isLoading || resetOtp.length !== 6} className="mt-5 w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-700 transition disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                   {isLoading ? <>VERIFYING <span className="animate-spin w-4 h-4 border-2 border-white/70 border-t-white rounded-full" /></> : 'VERIFY OTP'}
-                </div>
+                </button>
               </div>
             )}
 

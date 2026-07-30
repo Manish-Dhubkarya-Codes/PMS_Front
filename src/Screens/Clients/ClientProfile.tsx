@@ -41,7 +41,7 @@ const ClientProfile: React.FC = () => {
   const [projectCompleted, setProjectCompleted] = useState<number>(0);
   const [totalUnread, setTotalUnread] = useState<number>(0);
   const [loading, setLoading]=useState(true)
-  const [isRedirecting, setIsRedirecting] = useState(false);
+  // const [isRedirecting, setIsRedirecting] = useState(false);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const [clientData, setClientData] = useState<{
@@ -218,7 +218,7 @@ useEffect(() => {
 
     if (!storedUserDataB64 || !storedRoleB64) {
       console.warn("No user data or role found. Logging out...");
-      setIsRedirecting(true);           // ← ADD THIS
+      // setIsRedirecting(true);           // ← ADD THIS
       if (contextLogout) contextLogout();
       window.location.href = "/login-reg";
       return;
@@ -229,7 +229,7 @@ useEffect(() => {
       const role = atob(storedRoleB64);
 
       if (role !== "Client") {
-        setIsRedirecting(true);         // ← ADD THIS
+        // setIsRedirecting(true);         // ← ADD THIS
         if (contextLogout) contextLogout();
         window.location.href = "/login-reg";
         return;
@@ -237,7 +237,7 @@ useEffect(() => {
 
       const { clientId } = storedUserData;
       if (!clientId) {
-        setIsRedirecting(true);         // ← ADD THIS
+        // setIsRedirecting(true);         // ← ADD THIS
         if (contextLogout) contextLogout();
         window.location.href = "/login-reg";
         return;
@@ -248,13 +248,13 @@ useEffect(() => {
       });
 
       if (!response.status) {
-        setIsRedirecting(true);         // ← ADD THIS
+        // setIsRedirecting(true);         // ← ADD THIS
         if (contextLogout) contextLogout();
         window.location.href = "/login-reg";
       }
     } catch (error) {
       console.error("Error verifying client:", error);
-      setIsRedirecting(true);           // ← ADD THIS
+      // setIsRedirecting(true);           // ← ADD THIS
       if (contextLogout) contextLogout();
       window.location.href = "/login-reg";
     }
@@ -700,12 +700,19 @@ const IconChat = () => (
                     >
                       <div className="flex flex-col-reverse items-start justify-start w-full">
                         <div className="flex items-start justify-between w-full">
+                          <div className="flex items-center gap-2">
                           <Button1
                             width={widthClass}
                             gradientType={item.status === "Completed" ? "" : "gradient1"}
                             text={`${is2XL ? "text-[15px]" : "text-[12px]"} `}
                             value={item.Workstream}
                           />
+                          <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+item.ProjectId}
+  </span>
+  </div>
+</div>
 {totalUnreadForProject > 0 && !dismissedNotifications.has(item.ProjectId) && (
   <div className="relative w-fit max-w-xs ml-2">
     <div className="relative flex space-x-3 space-y-1 bg-blue-50 border border-blue-200 rounded-lg p-3 shadow-md">

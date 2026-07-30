@@ -715,13 +715,18 @@ const requestedUnreadTotal = useMemo(() =>
                     >
                       <div className="flex flex-col-reverse items-start justify-start w-full">
                        <div className="w-full flex items-start justify-between">
-                        <div className="">
+                        <div className="flex flex-row items-center gap-2">
                           <Button1
                             width={widthClass}
                             gradientType={isCompletedTab ? undefined : "gradient1"}
                             text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                             value={item.workstream}
                           />
+                          <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+item.project_id}
+  </span>
+</div>
                         </div>
                        {/* Notification Bubble - Dismissible */}
 {unreadInfoForProject.unreadFromTL > 0 && 

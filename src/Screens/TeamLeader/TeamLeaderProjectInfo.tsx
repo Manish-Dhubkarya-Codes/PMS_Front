@@ -142,6 +142,7 @@ const TeamLeaderProjectInfo: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [playNotification] = useSound(notificationSound);
+  const [selectedMention, setSelectedMention] = useState<ChatMessage["mention"] | null>(null);
   const location = useLocation();
   const { item } = location.state || {};
   const storedUserData = localStorage.getItem("userData");
@@ -365,41 +366,50 @@ const handleClickOnReplyBubble = (reply: ReplyMessage) => {
 };
 
 const detectMention = (message: string): ChatMessage["mention"] | null => {
-  const mentionMatch = message.match(/@(\S+)/i);
-  if (!mentionMatch) return null;
-  const mentionText = mentionMatch[1].trim();
-  const clientNameTrimmed = (projectDetails?.clientName || '').trim().toLowerCase();
-  const headNameTrimmed = headName.trim().toLowerCase();
-  if (mentionText.toLowerCase() === clientNameTrimmed) {
+  const clientName = (projectDetails?.clientName || "").trim();
+  const headNameTrimmed = (headName || "").trim();
+
+  if (clientName && message.toLowerCase().includes(`@${clientName.toLowerCase()}`)) {
     return {
       type: "client",
-      id: (projectDetails?.clientid || '').toString(),
-      name: projectDetails?.clientName || '',
-    };
-  } else if (mentionText.toLowerCase() === headNameTrimmed) {
-    return {
-      type: "head",
-      id: headId,
-      name: headName,
+      id: (projectDetails?.clientid || "").toString(),
+      name: clientName,
     };
   }
+
+  if (headNameTrimmed && message.toLowerCase().includes(`@${headNameTrimmed.toLowerCase()}`)) {
+    return {
+      type: "head",
+      id: (headId || "").toString(),
+      name: headNameTrimmed,
+    };
+  }
+
   return null;
 };
-  const handleMentionSelect = (option: MentionOption) => {
-    if (inputRef.current) {
-      const cursorPos = inputRef.current.selectionStart || 0;
-      const before = newMessage.substring(0, cursorPos).replace(/@[^@]*$/, "");
-      const after = newMessage.substring(cursorPos);
-      const newValue = `${before}${option.value} ${after}`;
-      setNewMessage(newValue);
-   
-      inputRef.current.focus();
-      const newCursorPos = before.length + option.value.length + 1; // +1 for space
-      setTimeout(() => {
-        inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
-      }, 0);
-    }
-  };
+const handleMentionSelect = (option: MentionOption) => {
+  if (inputRef.current) {
+    const cursorPos = inputRef.current.selectionStart || 0;
+    const before = newMessage.substring(0, cursorPos).replace(/@[^@]*$/, "");
+    const after = newMessage.substring(cursorPos);
+    const newValue = `${before}${option.value} ${after}`;
+    setNewMessage(newValue);
+
+    // ★ CRITICAL – keep the full object
+    setSelectedMention({
+      type: option.type,          // "client" | "head"
+      id: option.id.toString(),   // force string
+      name: option.name,
+      imageUrl: option.imageUrl,
+    });
+
+    inputRef.current.focus();
+    const newCursorPos = before.length + option.value.length + 1;
+    setTimeout(() => {
+      inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
+  }
+};
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setNewMessage(value);
@@ -1407,6 +1417,7 @@ const handleSendMessage = async (
             a.timestamp.localeCompare(b.timestamp)
           )
         );
+        const mentionToSend = selectedMention || detectMention(newMessage);
 
         socket.emit("sendTLMessage", {
           projectId: projId,
@@ -1414,13 +1425,14 @@ const handleSendMessage = async (
           msgData: message,
           timestamp,
           teamleaderid,
-          mention,
+          mention: mentionToSend,
           tempId,
           replyTo: currentReplyTo,
         });
 
-        setNewMessage("");
-        setReplyToMessage(null);
+        setSelectedMention(null);
+setNewMessage("");
+setReplyToMessage(null);
       } 
       else if (type === "voice" && files && files[0]?.blob) {
         const file = files[0];

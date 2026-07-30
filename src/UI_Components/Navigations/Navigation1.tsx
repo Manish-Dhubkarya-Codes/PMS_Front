@@ -12,6 +12,7 @@ interface TabsProps {
   totalUnreadAccepted?: number;
   totalUnreadRequested?: number;
   totalUnreadCompleted?: number;
+  totalPendingVerify?: number;
 }
 
 const Navigation1: React.FC<TabsProps> = ({ 
@@ -25,7 +26,8 @@ const Navigation1: React.FC<TabsProps> = ({
   totalUnreadRequests,
   totalUnreadAccepted,
   totalUnreadRequested,
-  totalUnreadCompleted
+  totalUnreadCompleted,
+  totalPendingVerify
 }) => {
   return (
     <div className="w-full py-2 px-4 overflow-x-auto no-scrollbar">
@@ -45,7 +47,8 @@ const Navigation1: React.FC<TabsProps> = ({
             (tab === "Requests" && typeof totalUnreadRequests === "number" && totalUnreadRequests > 0) ||
             (tab === "Accepted" && typeof totalUnreadAccepted === "number" && totalUnreadAccepted > 0) ||
             (tab === "Requested" && typeof totalUnreadRequested === "number" && totalUnreadRequested > 0) ||
-            (tab === "Completed" && typeof totalUnreadCompleted === "number" && totalUnreadCompleted > 0);
+            (tab === "Completed" && typeof totalUnreadCompleted === "number" && totalUnreadCompleted > 0) || 
+            (tab === "Verify Employee" && typeof totalPendingVerify === "number" && totalPendingVerify > 0); // ← NEW
 
           const badgeCount =
             tab === "All Projects" ? totalUnreadAll :
@@ -55,7 +58,9 @@ const Navigation1: React.FC<TabsProps> = ({
             tab === "Requests" ? totalUnreadRequests :
             tab === "Accepted" ? totalUnreadAccepted :
             tab === "Requested" ? totalUnreadRequested :
-            tab === "Completed" ? totalUnreadCompleted : 0;
+            tab === "Completed" ? totalUnreadCompleted :
+           tab === "Verify Employee" ? totalPendingVerify : 0; 
+            
 
           return (
             <div

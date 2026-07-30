@@ -934,6 +934,8 @@ useEffect(() => {
       .filter((item) => item.status === "pending" || item.status === "accepted" || item.status === "TLAssign")
       .map((item) => String(item.project_id))
   );
+  console.log(requestedProjectIds);
+  
 
   const groupedPendingRequests = requests
     .filter((item) => item.status === "pending")
@@ -1383,13 +1385,18 @@ const filteredItems =
                             } w-full min-w-[700px] flex-col`}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
-                            <div>
+                            <div className="flex gap-2 items-center justify-start w-full">
                               <Button1
                                 width={widthClass}
                                 gradientType="gradient1"
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={item.workstream}
                               />
+                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+item.project_id}
+  </span>
+</div>
                             </div>
                             <div className="border-t-2 border-[#000000] w-full"></div>
                           </div>
@@ -1490,12 +1497,19 @@ const filteredItems =
                       >
                         <div className="flex flex-col-reverse items-start justify-start w-full">
                           <div className="flex items-start justify-between w-full">
+                            <div className="flex gap-2 items-center justify-start w-full">
                             <Button1
                               width={widthClass}
                               gradientType="gradient1"
                               text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                               value={item.workstream}
                             />
+                            <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+projectItem.project_id}
+  </span>
+</div>
+</div>
                             <div className="flex items-center space-x-3">
                               {/* Chevron Tag */}
                               <div
@@ -1688,12 +1702,20 @@ const filteredItems =
           >
             <div className="flex flex-col-reverse items-start justify-start w-full">
               <div className="flex items-start justify-between w-full">
+                <div className="flex gap-2 items-center justify-start w-full">
                 <Button1
                   gradientType="gradient1"
                   width={widthClass}
                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                   value={projectItem.workstream}
                 />
+                <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+projectItem.project_id}
+  </span>
+</div>
+</div>
+
                 <div className="flex items-center space-x-3">
                   <div
                     className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center bg-blue-600 text-xs font-medium text-white transition-colors hover:bg-blue-500"
@@ -1819,12 +1841,19 @@ const filteredItems =
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
                             <div className="flex items-start justify-between w-full">
+                              <div className="flex gap-2 items-center justify-start w-full">
                               <Button1
                                 gradientType="gradient1"
                                 width={widthClass}
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={projectItem.workstream}
                               />
+                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+projectItem.project_id}
+  </span>
+</div>
+</div>
                               <div className="flex items-center space-x-3">
                                 <div
                                   className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
@@ -2111,11 +2140,18 @@ const filteredItems =
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
                             <div className="flex items-start justify-between w-full">
+                              <div className="flex gap-2 items-center justify-start w-full">
                               <Button1
                                 width={widthClass}
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={projectItem.workstream}
                               />
+                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+projectItem.project_id}
+  </span>
+</div>
+</div>
                               <div className="flex items-center space-x-3">
                                 <div
                                   className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
@@ -2223,13 +2259,18 @@ const filteredItems =
                         }}
                       >
                         <div className="flex flex-col-reverse items-start justify-start w-full">
-                          <div className="flex items-start justify-between w-full">
+                          <div className="flex items-start gap-2 w-full">
                             <Button1
                               width={widthClass}
                               gradientType="gradient1"
                               text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                               value={item.workstream}
                             />
+                            <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+item.project_id}
+  </span>
+</div>
                           </div>
                           <div className="border-t-2 border-[#000000] w-full"></div>
                         </div>
@@ -2348,13 +2389,18 @@ const filteredItems =
                           }}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
-                            <div className="flex items-start justify-between w-full">
+                            <div className="flex items-start gap-2 w-full">
                               <Button1
                                 width={widthClass}
                                 gradientType="gradient1"
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={projectItem.workstream}
                               />
+                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+projectItem.project_id}
+  </span>
+</div>
                             </div>
                             <div className="border-t-2 border-[#000000] w-full"></div>
                           </div>
@@ -2485,12 +2531,17 @@ const filteredItems =
                               } w-full min-w-[700px] flex-col`}
                           >
                             <div className="flex flex-col-reverse items-start justify-start w-full">
-                              <div className="flex items-start justify-between w-full">
+                              <div className="flex items-start gap-2 w-full">
                                 <Button1
                                   width={widthClass}
                                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                   value={projectItem.workstream}
                                 />
+                                <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    {"ID:"+projectItem.project_id}
+  </span>
+</div>
                               </div>
                               <div className="border-t-2 border-[#000000] w-full"></div>
                             </div>

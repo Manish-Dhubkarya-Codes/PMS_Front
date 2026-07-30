@@ -106,7 +106,10 @@ const calculatedTotalUnread = useMemo(() =>
   }, 0),
   [projectDetails]
 );
-
+const pendingVerifyCount = useMemo(
+  () => employeeRegRequests.filter((r) => r.status === "pending").length,
+  [employeeRegRequests]
+);
 const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
 
 useEffect(() => {
@@ -927,6 +930,7 @@ const IconChat = () => (
     localStorage.setItem("headProjectListActiveTab", tab);
   }} 
   totalUnreadAll={totalUnread} 
+  totalPendingVerify={pendingVerifyCount}
 />
           
           </div>
@@ -958,66 +962,53 @@ const IconChat = () => (
           >
             <div className="flex flex-col-reverse items-start justify-start w-full">
               <div className="flex items-start justify-between w-full">
+                <div className={`flex font-semibold ${textColor} ${textSize} space-x-2 -tracking-[0.02rem]`}>
                 <Button1
                   width={getWidthClass(maxProjectTextLength)}
                   gradientType={status === "Completed" ? "" : "gradient1"}
                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                   value={item.workstream}
                 />
+                <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    ID:{item.project_id}
+  </span>
+</div>
+              
                 
-{totalUnreadForProject > 0 && !dismissedNotifications.has(item.project_id) && (
-  <div className="relative w-fit max-w-xs ml-2">
-    <div className="relative flex space-x-3 bg-blue-50 border border-blue-200 rounded-lg p-3 shadow-md">
-      {/* Pointer Triangle */}
-      <div className="absolute -bottom-[7px] left-[3px] w-0 h-0 border-l-[7px] border-r-[7px] border-t-[8px] border-l-transparent border-r-transparent border-t-blue-200"></div>
-      <div className="absolute -bottom-[5px] left-[4px] w-0 h-0 border-l-[6px] border-r-[6px] border-t-[7px] border-l-transparent border-r-transparent border-t-blue-50"></div>
-
-      {/* Close Button */}
-     <MdCancel
-     size={22}
-  onClick={(e) => {
-    e.stopPropagation();
-    setDismissedNotifications((prev) => new Set([...prev, item.project_id]));
-  }}
-  className="absolute top-1.5 right-0 text-gray-400 hover:text-red-500 
-             hover:bg-red-100 rounded-full p-0.5 
-             transition-all duration-200 cursor-pointer"
-/>
-      {/* Badge */}
-      <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 text-sm font-bold text-white bg-green-500 rounded-full">
-        {totalUnreadForProject}
+{(item.unreadFromClient + item.unreadFromTL > 0) &&
+  !dismissedNotifications.has(item.project_id) && (
+    <div className="flex items-center justify-center gap-2 ml-3">
+      {/* Green = normal unread message */}
+      <span
+        className="relative flex h-3 w-3 cursor-pointer"
+        title="New message"
+        onClick={(e) => {
+          e.stopPropagation();
+          setDismissedNotifications((prev) => new Set([...prev, item.project_id]));
+        }}
+      >
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+        <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
       </span>
 
-      {/* Content — add pr-4 so text doesn't run under the close button */}
-      <div className="flex flex-col space-y-1.5 pr-4">
-        {item.hasMentionFromClient && (
-          <div className="flex items-center space-x-1.5">
-            <IconAt />
-            <span className="text-xs text-blue-700 font-medium">Client tagged you</span>
-          </div>
-        )}
-        {item.hasMentionFromTL && (
-          <div className="flex items-center space-x-1.5">
-            <IconAt />
-            <span className="text-xs text-blue-700 font-medium">Team Leader tagged you</span>
-          </div>
-        )}
-        {item.unreadFromClient > 0 && !item.hasMentionFromClient && (
-          <div className="flex items-center space-x-1.5">
-            <IconChat />
-            <span className="text-xs text-gray-700">New message from Client ({item.clientName})</span>
-          </div>
-        )}
-        {item.unreadFromTL > 0 && !item.hasMentionFromTL && (
-          <div className="flex items-center space-x-1.5">
-            <IconChat />
-            <span className="text-xs text-gray-700">New message from TL ({item.teamLeaderName})</span>
-          </div>
-        )}
-      </div>
+      {/* Blue = tagged / mentioned */}
+      {(item.hasMentionFromClient || item.hasMentionFromTL) && (
+        <span
+          className="relative flex h-3 w-3 cursor-pointer"
+          title="You were tagged"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDismissedNotifications((prev) => new Set([...prev, item.project_id]));
+          }}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+        </span>
+      )}
     </div>
-  </div>
-)}
+  )}
+    </div>
               </div>
               <div className="border-t-2 border-[#000000] w-full"></div>
             </div>
@@ -1051,6 +1042,7 @@ const IconChat = () => (
       })}
     </span>
   </div>
+ 
 
   {/* Active Status */}
   {item.active_date && item.status === "Active" && (
