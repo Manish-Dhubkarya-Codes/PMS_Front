@@ -140,7 +140,12 @@ const TeamLeaderLanding: React.FC = () => {
       console.error("Fetch Employees Error:", err);
     }
   }, [error]);
-
+const [totalPendingVerify, setTotalPendingVerify] = useState<number>(0);
+useEffect(() => {
+  setTotalPendingVerify(
+    employeeRegRequests.filter((r) => r.status === "pending").length
+  );
+}, [employeeRegRequests]);
 useEffect(() => {
   const storedUserData = localStorage.getItem("userData");
   const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
@@ -370,20 +375,28 @@ useEffect(() => {
     });
   }, [requests, projectDetails]);
 
+  // ===== TOTAL UNREAD COUNTS FOR ALL TABS =====
 useEffect(() => {
-  const requestedProjectIds = new Set(
-    requests
-      .filter((item) => ["pending", "accepted", "TLAssign"].includes(item.status || ""))
-      .map((item) => '' + item.project_id)
-  );
-
   const completedProjectIds = new Set(
     projectDetails
-      .filter((item: ProjectListProps) => item.status === "Completed")
-      .map((item: ProjectListProps) => String(item.project_id))
+      .filter((item) => item.status === "Completed")
+      .map((item) => String(item.project_id))
+  );
+
+  const activeIds = new Set(
+    projectDetails
+      .filter((p) => p.status === "Active")
+      .map((p) => '' + p.project_id)
   );
 
   const ongoingIds = new Set(
+    requests
+      .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
+      .map((item) => '' + item.project_id)
+      .filter((id) => !completedProjectIds.has(id))
+  );
+
+  const assignedIds = new Set(
     requests
       .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
       .map((item) => '' + item.project_id)
@@ -394,19 +407,6 @@ useEffect(() => {
     requests
       .filter((item) => item.status === "pending")
       .map((item) => '' + item.project_id)
-  );
-
-  const activeIds = new Set(
-    projectDetails
-      .filter((p) => p.status === "Active" && !requestedProjectIds.has('' + p.project_id))
-      .map((p) => '' + p.project_id)
-  );
-
-  const assignedIds = new Set(
-    requests
-      .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
-      .map((item) => '' + item.project_id)
-      .filter((id) => !completedProjectIds.has(id))
   );
 
   setTotalUnreadActive(
@@ -423,74 +423,20 @@ useEffect(() => {
     }, 0)
   );
 
-  setTotalUnreadRequests(
-    Array.from(pendingIds).reduce((sum, id) => {
-      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-    }, 0)
-  );
-
   setTotalUnreadAssigned(
     Array.from(assignedIds).reduce((sum, id) => {
       const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
       return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
     }, 0)
   );
+
+  setTotalUnreadRequests(
+    Array.from(pendingIds).reduce((sum, id) => {
+      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
+      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
+    }, 0)
+  );
 }, [unreadInfo, requests, projectDetails]);
-
-  useEffect(() => {
-    const requestedProjectIds = new Set(
-      requests
-        .filter((item) => ["pending", "accepted", "TLAssign"].includes(item.status || ""))
-        .map((item) => '' + item.project_id)
-    );
-
-    // Completed projects → their unread count is forced to 0 everywhere
-   
-
-    const ongoingIds = new Set(
-      requests
-        .filter((item) => ["accepted", "TLAssign"].includes(item.status || ""))
-        .map((item) => '' + item.project_id)
-        .filter((id) => !completedProjectIds.has(id))   // ← exclude completed
-    );
-
-    const pendingIds = new Set(
-      requests
-        .filter((item) => item.status === "pending")
-        .map((item) => '' + item.project_id)
-    );
-
-    const activeIds = new Set(
-      projectDetails
-        .filter((p) =>
-          p.status === "Active" &&                     // ← added status filter
-          !requestedProjectIds.has('' + p.project_id)
-        )
-        .map((p) => '' + p.project_id)
-    );
-
-    setTotalUnreadActive(
-      Array.from(activeIds).reduce((sum, id) => {
-        const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-        return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-      }, 0)
-    );
-
-    setTotalUnreadOngoing(
-      Array.from(ongoingIds).reduce((sum, id) => {
-        const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-        return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-      }, 0)
-    );
-
-    setTotalUnreadRequests(
-      Array.from(pendingIds).reduce((sum, id) => {
-        const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-        return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-      }, 0)
-    );
-  }, [unreadInfo, requests, projectDetails]);
 
   // Fetch projects and requests (initial only)
   const fetchProjectsAndRequests = useCallback(async () => {
@@ -763,6 +709,23 @@ useEffect(() => {
       // Cleanup
     };
   }, [onEvent, department]);
+
+  useEffect(() => {
+  if (department !== "Technical") return;
+
+  const handleNewEmployeeRegistration = (data: EmployeeRegRequest) => {
+    setEmployeeRegRequests((prev) => {
+      if (prev.some((item) => item.id === data.id)) return prev;
+      return [data, ...prev].sort((a, b) => {
+        const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
+        return statusOrder[a.status] - statusOrder[b.status];
+      });
+    });
+  };
+
+  onEvent("newEmployeeRegistration", handleNewEmployeeRegistration);
+  return () => {};
+}, [onEvent, department]);
 
   // Listen for project status updates
   useEffect(() => {
@@ -1246,6 +1209,42 @@ const filteredItems =
     </svg>
   );
 
+  const UnreadDots = ({
+  showGreen,
+  showBlue,
+  onDismiss,
+}: {
+  showGreen: boolean;
+  showBlue: boolean;
+  onDismiss: (e: React.MouseEvent) => void;
+}) => {
+  if (!showGreen && !showBlue) return null;
+  return (
+    <div className="flex items-center justify-center gap-1.5 ml-1.5">
+      {showGreen && (
+        <span
+          className="relative flex h-3 w-3 cursor-pointer"
+          title="New message"
+          onClick={onDismiss}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+        </span>
+      )}
+      {showBlue && (
+        <span
+          className="relative flex h-3 w-3 cursor-pointer"
+          title="You were tagged"
+          onClick={onDismiss}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500" />
+        </span>
+      )}
+    </div>
+  );
+};
+
   const handleUpdateStatus = async (projectId: string, newStatus: string) => {
     const confirmed = confirm(`Are you sure you want to change the project status to ${newStatus}?`);
     if (!confirmed) return;
@@ -1366,6 +1365,7 @@ const filteredItems =
   totalUnreadOngoing={totalUnreadOngoing}
   totalUnreadAssigned={totalUnreadAssigned}
   totalUnreadRequests={totalUnreadRequests}
+  totalPendingVerify={totalPendingVerify}
 />         </div>
           </div>
           <div className="overflow-x-auto">
@@ -1510,18 +1510,38 @@ const filteredItems =
   </span>
 </div>
 </div>
-                            <div className="flex items-center space-x-3">
-                              {/* Chevron Tag */}
-                              <div
-                                className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
-                                   bg-blue-600 text-xs font-medium text-white
-                                   transition-colors hover:bg-blue-500"
-                                style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
-                                onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item } })}
-                              >
-                                Talk to Client/Head
-                              </div>
-                            </div>
+<div className="flex items-center space-x-3">
+  <div className="flex items-center">
+    <div
+      className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
+                 bg-blue-600 text-xs font-medium text-white
+                 transition-colors hover:bg-blue-500"
+      style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+      onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item } })}
+    >
+      Talk to Client/Head
+    </div>
+    {!dismissedNotifications.has(projectItem.project_id) && (
+      <UnreadDots
+        showGreen={
+          (unreadInfoForProject.unreadFromHead || 0) +
+            (unreadInfoForProject.unreadFromClient || 0) >
+          0
+        }
+        showBlue={
+          unreadInfoForProject.hasMentionFromHead ||
+          unreadInfoForProject.hasMentionFromClient
+        }
+        onDismiss={(e) => {
+          e.stopPropagation();
+          setDismissedNotifications((prev) =>
+            new Set([...prev, projectItem.project_id])
+          );
+        }}
+      />
+    )}
+  </div>
+</div>
                           </div>
                           <div className="border-t-2 border-[#000000] w-full"></div>
                         </div>
@@ -1563,96 +1583,6 @@ const filteredItems =
                             {item.clientName || "N/A"}
                           </div>
                         </div>
-                        {(() => {
-                          const totalUnread =
-                            (unreadInfoForProject.unreadFromHead || 0) +
-                            (unreadInfoForProject.unreadFromClient || 0) +
-                            (unreadInfoForProject.unreadFromMonitor || 0);
-
-                          // Only render the component if there is something to show
-                          if (totalUnread === 0) {
-                            return null;
-                          }
-
-                          return (
-                            <>
-                            {hasAnyUnreadOrMention && 
- !dismissedNotifications.has(projectItem.project_id) && (
-                            <div className="absolute right-0 top-7 w-fit mt-2 z-50">
-                              {/* Notification Container */}
-                              <div className="relative bg-blue-50 border border-blue-200 rounded-lg p-3 pr-8 shadow-md">
-
-                                {/* Pointer Triangle (perfectly at top-left corner) */}
-                                <div className="absolute -top-[7px] left-[8px] w-0 h-0 border-l-[7px] border-r-[7px] border-b-[8px] border-l-transparent border-r-transparent border-b-blue-200"></div>
-                                <div className="absolute -top-[6px] left-[9px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[7px] border-l-transparent border-r-transparent border-b-blue-50"></div>
-<MdCancel
-        size={22}
-        onClick={(e) => {
-          e.stopPropagation();
-          setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
-        }}
-        className="absolute top-1.5 right-1 text-gray-400 hover:text-red-500 hover:bg-red-100 rounded-full p-0.5 transition-all duration-200 cursor-pointer"
-      />
-                                {/* Inner content */}
-                                <div className="flex items-start space-x-3">
-                                  {/* Badge */}
-                                  <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 text-sm font-bold text-white bg-green-500 rounded-full">
-                                    {totalUnread}
-                                  </span>
-
-                                  {/* Content */}
-                                  <div className="flex flex-col space-y-1.5">
-                                    {unreadInfoForProject.hasMentionFromHead && (
-                                      <div className="flex items-center space-x-1.5">
-                                        <IconAt />
-                                        <span className="text-xs text-blue-700 font-medium">
-                                          Head tagged you.
-                                        </span>
-                                      </div>
-                                    )}
-
-                                    {unreadInfoForProject.hasMentionFromClient && (
-                                      <div className="flex items-center space-x-1.5">
-                                        <IconAt />
-                                        <span className="text-xs text-blue-700 font-medium">
-                                          Client tagged you.
-                                        </span>
-                                      </div>
-                                    )}
-
-                                    {unreadInfoForProject.unreadFromHead > 0 && !unreadInfoForProject.hasMentionFromHead && (
-                                      <div className="flex items-center space-x-1.5">
-                                        <IconChat />
-                                        <span className="text-xs text-gray-700">
-                                          New message{unreadInfoForProject.unreadFromHead > 1 ? 's' : ''} from Head ({unreadInfoForProject.headName})
-                                        </span>
-                                      </div>
-                                    )}
-
-                                    {unreadInfoForProject.unreadFromClient > 0 && !unreadInfoForProject.hasMentionFromClient && (
-                                      <div className="flex items-center space-x-1.5">
-                                        <IconChat />
-                                        <span className="text-xs text-gray-700">
-                                          New message{unreadInfoForProject.unreadFromClient > 1 ? 's' : ''} from Client ({unreadInfoForProject.clientName})
-                                        </span>
-                                      </div>
-                                    )}
-
-                                    {unreadInfoForProject.unreadFromMonitor > 0 && (
-                                      <div className="flex items-center space-x-1.5">
-                                        <IconChat />
-                                        <span className="text-xs text-gray-700">
-                                          New message{unreadInfoForProject.unreadFromMonitor > 1 ? 's' : ''} from Employee ({unreadInfoForProject.monitorName})
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>)}
-                            </>
-                          );
-                        })()}
                       </div>
                     );
                   })
@@ -1716,23 +1646,78 @@ const filteredItems =
 </div>
 </div>
 
-                <div className="flex items-center space-x-3">
-                  <div
-                    className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center bg-blue-600 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-                    style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
-                    onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item: projectItem } })}
-                  >
-                    Talk to Client/Head
-                  </div>
+               <div className="flex items-center space-x-3">
+  {/* Talk to Client/Head */}
+  <div className="flex items-center">
+    <div
+      className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
+                 bg-blue-600 text-xs font-medium text-white
+                 transition-colors hover:bg-blue-500"
+      style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+      onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item: projectItem } })}
+    >
+      Talk to Client/Head
+    </div>
+    {!dismissedNotifications.has(projectItem.project_id) && (
+      <div className="flex items-center gap-1.5 ml-1.5">
+        {((unreadInfoForProject.unreadFromHead || 0) + (unreadInfoForProject.unreadFromClient || 0) > 0) && (
+          <span
+            className="relative flex h-3 w-3 cursor-pointer"
+            title="New message from Client/Head"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
+            }}
+          >
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+          </span>
+        )}
+        {(unreadInfoForProject.hasMentionFromHead || unreadInfoForProject.hasMentionFromClient) && (
+          <span
+            className="relative flex h-3 w-3 cursor-pointer"
+            title="You were tagged"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
+            }}
+          >
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500" />
+          </span>
+        )}
+      </div>
+    )}
+  </div>
 
-                  <div
-                    className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center bg-slate-700 text-xs font-medium text-white transition-colors hover:bg-slate-600"
-                    style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
-                    onClick={() => navigate(`/teamleaderprojectinfo_withemployee`, { state: { item: projectItem } })}
-                  >
-                    Talk to Employee
-                  </div>
-                </div>
+  {/* Talk to Employee */}
+  <div className="flex items-center">
+    <div
+      className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
+                 bg-slate-700 text-xs font-medium text-white
+                 transition-colors hover:bg-slate-600"
+      style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+      onClick={() => navigate(`/teamleaderprojectinfo_withemployee`, { state: { item: projectItem } })}
+    >
+      Talk to Employee
+    </div>
+    {!dismissedNotifications.has(projectItem.project_id) && (unreadInfoForProject.unreadFromMonitor || 0) > 0 && (
+      <div className="flex items-center gap-1.5 ml-1.5">
+        <span
+          className="relative flex h-3 w-3 cursor-pointer"
+          title="New message from Employee"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
+          }}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+        </span>
+      </div>
+    )}
+  </div>
+</div>
               </div>
               <div className="border-t-2 border-[#000000] w-full"></div>
             </div>
@@ -1772,37 +1757,6 @@ const filteredItems =
               </div>
             </div>
 
-            {/* Notification badge (same as On-Going) */}
-            {hasAnyUnreadOrMention && !dismissedNotifications.has(projectItem.project_id) && (
-              <div className="absolute right-5 top-15 w-fit mt-2 z-50">
-                <div className="relative bg-blue-50 border border-blue-200 rounded-lg p-3 pr-8 shadow-md">
-                  <div className="absolute -top-[7px] left-[8px] w-0 h-0 border-l-[7px] border-r-[7px] border-b-[8px] border-l-transparent border-r-transparent border-b-blue-200"></div>
-                  <div className="absolute -top-[6px] left-[9px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[7px] border-l-transparent border-r-transparent border-b-blue-50"></div>
-
-                  <MdCancel
-                    size={22}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
-                    }}
-                    className="absolute top-1.5 right-1 text-gray-400 hover:text-red-500 hover:bg-red-100 rounded-full p-0.5 transition-all duration-200 cursor-pointer"
-                  />
-
-                  <div className="flex items-start space-x-3">
-                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 text-sm font-bold text-white bg-green-500 rounded-full">
-                      {(unreadInfoForProject.unreadFromHead || 0) + (unreadInfoForProject.unreadFromClient || 0) + (unreadInfoForProject.unreadFromMonitor || 0)}
-                    </span>
-                    <div className="flex flex-col space-y-1.5 text-xs">
-                      {unreadInfoForProject.hasMentionFromHead && <div className="text-blue-700">Head tagged you.</div>}
-                      {unreadInfoForProject.hasMentionFromClient && <div className="text-blue-700">Client tagged you.</div>}
-                      {unreadInfoForProject.unreadFromHead > 0 && !unreadInfoForProject.hasMentionFromHead && <div>New message{unreadInfoForProject.unreadFromHead > 1 ? "s" : ""} from Head</div>}
-                      {unreadInfoForProject.unreadFromClient > 0 && !unreadInfoForProject.hasMentionFromClient && <div>New message{unreadInfoForProject.unreadFromClient > 1 ? "s" : ""} from Client</div>}
-                      {unreadInfoForProject.unreadFromMonitor > 0 && <div>New message{unreadInfoForProject.unreadFromMonitor > 1 ? "s" : ""} from Employee</div>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         );
       }
@@ -1854,27 +1808,70 @@ const filteredItems =
   </span>
 </div>
 </div>
-                              <div className="flex items-center space-x-3">
-                                <div
-                                  className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
-               bg-blue-600 text-xs font-medium text-white
-               transition-colors hover:bg-blue-500"
-                                  style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
-                                  onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item: projectItem } })}
-                                >
-                                  Talk to Client/Head
-                                </div>
+<div className="flex items-center space-x-3">
+  {/* Talk to Client/Head */}
+  <div className="flex items-center">
+    <div
+      className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
+                 bg-blue-600 text-xs font-medium text-white
+                 transition-colors hover:bg-blue-500"
+      style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+      onClick={() =>
+        navigate(`/teamleaderprojectinfo`, { state: { item: projectItem } })
+      }
+    >
+      Talk to Client/Head
+    </div>
+    {!dismissedNotifications.has(projectItem.project_id) && (
+      <UnreadDots
+        showGreen={
+          (unreadInfoForProject.unreadFromHead || 0) +
+            (unreadInfoForProject.unreadFromClient || 0) >
+          0
+        }
+        showBlue={
+          unreadInfoForProject.hasMentionFromHead ||
+          unreadInfoForProject.hasMentionFromClient
+        }
+        onDismiss={(e) => {
+          e.stopPropagation();
+          setDismissedNotifications((prev) =>
+            new Set([...prev, projectItem.project_id])
+          );
+        }}
+      />
+    )}
+  </div>
 
-                                <div
-                                  className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
-               bg-slate-700 text-xs font-medium text-white
-               transition-colors hover:bg-slate-600"
-                                  style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
-                                  onClick={() => navigate(`/teamleaderprojectinfo_withemployee`, { state: { item: projectItem } })}
-                                >
-                                  Talk to Employee
-                                </div>
-                              </div>
+  {/* Talk to Employee */}
+  <div className="flex items-center">
+    <div
+      className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
+                 bg-slate-700 text-xs font-medium text-white
+                 transition-colors hover:bg-slate-600"
+      style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
+      onClick={() =>
+        navigate(`/teamleaderprojectinfo_withemployee`, {
+          state: { item: projectItem },
+        })
+      }
+    >
+      Talk to Employee
+    </div>
+    {!dismissedNotifications.has(projectItem.project_id) && (
+      <UnreadDots
+        showGreen={(unreadInfoForProject.unreadFromMonitor || 0) > 0}
+        showBlue={false} // monitor currently has no mention flag
+        onDismiss={(e) => {
+          e.stopPropagation();
+          setDismissedNotifications((prev) =>
+            new Set([...prev, projectItem.project_id])
+          );
+        }}
+      />
+    )}
+  </div>
+</div>
                             </div>
                             <div className="border-t-2 border-[#000000] w-full"></div>
                           </div>
@@ -1925,97 +1922,6 @@ const filteredItems =
                               )}
                             </div>
                           </div>
-                          {(() => {
-                            const totalUnread =
-                              (unreadInfoForProject.unreadFromHead || 0) +
-                              (unreadInfoForProject.unreadFromClient || 0) +
-                              (unreadInfoForProject.unreadFromMonitor || 0);
-
-                            // Only render the component if there is something to show
-                            if (totalUnread === 0) {
-                              return null;
-                            }
-
-                            return (
-                              <>
-                              {hasAnyUnreadOrMention && 
- !dismissedNotifications.has(projectItem.project_id) && (
-                              <div className="absolute right-5 top-15 w-fit mt-2 z-50">
-                                {/* Notification Container */}
-                                <div className="relative bg-blue-50 border border-blue-200 rounded-lg p-3 pr-8 shadow-md">
-
-                                  {/* Pointer Triangle (perfectly at top-left corner) */}
-                                  <div className="absolute -top-[7px] left-[8px] w-0 h-0 border-l-[7px] border-r-[7px] border-b-[8px] border-l-transparent border-r-transparent border-b-blue-200"></div>
-                                  <div className="absolute -top-[6px] left-[9px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[7px] border-l-transparent border-r-transparent border-b-blue-50"></div>
-<MdCancel
-        size={22}
-        onClick={(e) => {
-          e.stopPropagation();
-          setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
-        }}
-        className="absolute top-1.5 right-1 text-gray-400 hover:text-red-500 hover:bg-red-100 rounded-full p-0.5 transition-all duration-200 cursor-pointer"
-      />
-                                  {/* Inner content */}
-                                  <div className="flex items-start space-x-3">
-                                    {/* Badge */}
-                                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 text-sm font-bold text-white bg-green-500 rounded-full">
-                                      {totalUnread}
-                                    </span>
-
-                                    {/* Content */}
-                                    <div className="flex flex-col space-y-1.5">
-                                      {unreadInfoForProject.hasMentionFromHead && (
-                                        <div className="flex items-center space-x-1.5">
-                                          <IconAt />
-                                          <span className="text-xs text-blue-700 font-medium">
-                                            Head tagged you.
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {unreadInfoForProject.hasMentionFromClient && (
-                                        <div className="flex items-center space-x-1.5">
-                                          <IconAt />
-                                          <span className="text-xs text-blue-700 font-medium">
-                                            Client tagged you.
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {unreadInfoForProject.unreadFromHead > 0 && !unreadInfoForProject.hasMentionFromHead && (
-                                        <div className="flex items-center space-x-1.5">
-                                          <IconChat />
-                                          <span className="text-xs text-gray-700">
-                                            New message{unreadInfoForProject.unreadFromHead > 1 ? 's' : ''} from Head ({unreadInfoForProject.headName})
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {unreadInfoForProject.unreadFromClient > 0 && !unreadInfoForProject.hasMentionFromClient && (
-                                        <div className="flex items-center space-x-1.5">
-                                          <IconChat />
-                                          <span className="text-xs text-gray-700">
-                                            New message{unreadInfoForProject.unreadFromClient > 1 ? 's' : ''} from Client ({unreadInfoForProject.clientName})
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {unreadInfoForProject.unreadFromMonitor > 0 && (
-                                        <div className="flex items-center space-x-1.5">
-                                          <IconChat />
-                                          <span className="text-xs text-gray-700">
-                                            New message{unreadInfoForProject.unreadFromMonitor > 1 ? 's' : ''} from Employee ({unreadInfoForProject.monitorName})
-                                          </span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>)}
-                              </>
-
-                            );
-                          })()}
                         </div>
                       );
                     }

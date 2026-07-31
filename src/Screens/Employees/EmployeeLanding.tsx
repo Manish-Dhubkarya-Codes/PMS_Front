@@ -261,31 +261,28 @@ const EmployeeLanding: React.FC = () => {
     };
   }, [onEvent, fetchUnreadForRequests]);
 
-  // Join eligible TL monitor rooms
-  const joinEligibleRooms = async () => {
-    if (!connected || !employeeData?.employeeId || !employeeRequests.length || !allEmployeeRequests.length) return;
-
-    const tlMonitorPromises = requestedProjectIds.map(projectId =>
-      getData(`clientproject/get_tl_monitor_chats/${projectId}`).then(res => ({ projectId, tlMonitorResponse: res }))
-    );
-    const responses = await Promise.all(tlMonitorPromises);
-
-    responses.forEach(({ projectId }) => {
-      emitEvent('joinTlMonitorRoom', projectId);
-    });
-  };
-
   useEffect(() => {
-    joinEligibleRooms();
-  }, [connected, employeeRequests, allEmployeeRequests, employeeData, emitEvent]);
+  if (employeeRequests.length > 0) {
+    fetchUnreadForRequests();
+  }
+}, [employeeRequests.length]); // runs only when the list first becomes non-empty
 
-  // Re-join on tab switch to Requested or Accepted
-  useEffect(() => {
-    setCurrentPage(1);
-    if ((activeTab === "Requested" || activeTab === "Accepted") && connected && employeeData?.employeeId) {
-      joinEligibleRooms();  // Re-run to ensure fresh joins
-    }
-  }, [activeTab, connected, employeeData]);
+  // Join shared chat rooms for all projects the employee is involved in
+useEffect(() => {
+  if (!connected || !employeeData?.employeeId) return;
+
+  const projectIds = [
+    ...new Set(
+      employeeRequests
+        .filter(r => ["accepted", "TLAssign", "pending"].includes(r.status))
+        .map(r => r.project_id)
+    )
+  ];
+
+  projectIds.forEach(projectId => {
+    emitEvent("joinEmployeeChat", projectId);   // ← only this, no API call
+  });
+}, [connected, employeeData?.employeeId, employeeRequests, emitEvent]);
 
   // Fetch employee data from localStorage
   useEffect(() => {
@@ -396,9 +393,12 @@ const EmployeeLanding: React.FC = () => {
   }, [onEvent, employeeData?.employeeId, fetchUnreadForRequests]);
 
     // 🔥 FORCE LIVE UPDATE FOR UNREAD COUNT BADGE ON ACCEPTED TAB
-  useEffect(() => {
+// Only fetch once when the user opens Accepted or Requested tab
+useEffect(() => {
+  if (activeTab === "Accepted" || activeTab === "Requested") {
     fetchUnreadForRequests();
-  }, [unreadRequests, activeTab, fetchUnreadForRequests]);
+  }
+}, [activeTab]); // ← only activeTab
 
 useEffect(() => {
   const checkRole = async () => {
@@ -506,6 +506,9 @@ const requestedUnreadTotal = useMemo(() =>
   }, 0),
   [requestedProjects, unreadRequests, projectStatusMap]
 );
+
+// Active tab has no TL-monitor chat yet → always 0
+const activeUnreadTotal = 0;
 
   // NEW: Live data for all tabs (Active, Requested, Accepted, Completed)
   const data = useMemo(() => {
@@ -686,13 +689,14 @@ const requestedUnreadTotal = useMemo(() =>
           >
             <div className={`w-full ${isXXS || isXS || isSM || isMD ? "" : "mr-[24%]"}`}>
 
-            <Navigation1
+<Navigation1
   tabs={tabs}
   activeTab={activeTab}
   setActiveTab={(tab) => {
     setActiveTab(tab);
     localStorage.setItem("employeeLandingActiveTab", tab);
   }}
+  totalUnreadActive={activeUnreadTotal}
   totalUnreadAccepted={acceptedUnreadTotal}
   totalUnreadRequested={requestedUnreadTotal}
 />
@@ -714,55 +718,38 @@ const requestedUnreadTotal = useMemo(() =>
                       onClick={() => navigate(`/employeeprojectinfo`, { state: { item } })}
                     >
                       <div className="flex flex-col-reverse items-start justify-start w-full">
-                       <div className="w-full flex items-start justify-between">
-                        <div className="flex flex-row items-center gap-2">
-                          <Button1
-                            width={widthClass}
-                            gradientType={isCompletedTab ? undefined : "gradient1"}
-                            text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
-                            value={item.workstream}
-                          />
-                          <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
-    {"ID:"+item.project_id}
-  </span>
-</div>
-                        </div>
-                       {/* Notification Bubble - Dismissible */}
-{unreadInfoForProject.unreadFromTL > 0 && 
- !dismissedNotifications.has(projectItem.project_id) && (
-  <div className="relative flex w-fit pl-[2vw] justify-start items-start flex-col">
-    <div className="relative bg-blue-50 border border-blue-200 rounded-lg p-3 shadow-md max-w-xs">
-
-      {/* Pointer Triangle */}
-      <div className="absolute -bottom-[7px] left-[4px] w-0 h-0 border-l-[7px] border-r-[7px] border-t-[8px] border-l-transparent border-r-transparent border-t-blue-200"></div>
-      <div className="absolute -bottom-[5px] left-[4px] w-0 h-0 border-l-[6px] border-r-[6px] border-t-[7px] border-l-transparent border-r-transparent border-t-blue-50"></div>
-
-      {/* Close Button */}
-      <MdCancel
-        size={22}
-        onClick={(e) => {
-          e.stopPropagation(); // Prevent navigating to project
-          setDismissedNotifications((prev) => new Set([...prev, projectItem.project_id]));
-        }}
-        className="absolute top-1.5 right-1.5 text-gray-400 hover:text-red-500 hover:bg-red-100 rounded-full p-0.5 transition-all duration-200 cursor-pointer"
-      />
-
-      {/* Content */}
-      <div className="flex items-center space-x-2 pr-8"> {/* pr-8 to avoid overlap with close button */}
-        {/* Badge */}
-        <span className="flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-green-500 rounded-full">
-          {unreadInfoForProject.unreadFromTL}
-        </span>
-
-        {/* Message text */}
-        <span className="text-xs text-gray-700 leading-snug">
-          New message{unreadInfoForProject.unreadFromTL > 1 ? "s" : ""} from TL ({unreadInfoForProject.tlName})
-        </span>
-      </div>
+<div className="w-full flex items-start justify-between">
+  <div className="flex flex-row items-center gap-2">
+    <Button1
+      width={widthClass}
+      gradientType={isCompletedTab ? undefined : "gradient1"}
+      text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
+      value={item.workstream}
+    />
+    <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+      <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+        {"ID:" + item.project_id}
+      </span>
     </div>
+
+    {/* GREEN DOT ONLY */}
+    {unreadInfoForProject.unreadFromTL > 0 &&
+      !dismissedNotifications.has(String(projectItem.project_id)) && (
+        <span
+          className="relative flex h-3 w-3 cursor-pointer ml-2"
+          title="New message from Team Leader"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDismissedNotifications(
+              (prev) => new Set([...prev, String(projectItem.project_id)])
+            );
+          }}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+        </span>
+      )}
   </div>
-)}
 </div>
                         <div className="border-t-2 border-[#000000] w-full"></div>
                       </div>
