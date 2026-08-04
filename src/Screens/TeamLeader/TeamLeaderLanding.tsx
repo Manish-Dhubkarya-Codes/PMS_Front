@@ -430,12 +430,10 @@ useEffect(() => {
     }, 0)
   );
 
-  setTotalUnreadRequests(
-    Array.from(pendingIds).reduce((sum, id) => {
-      const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
-      return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
-    }, 0)
-  );
+setTotalUnreadRequests(
+  requests.filter((item) => item.status === "pending").length
+);
+
 }, [unreadInfo, requests, projectDetails]);
 
   // Fetch projects and requests (initial only)
@@ -487,14 +485,29 @@ useEffect(() => {
 
 // ADD this after the existing "Listen for project status updates" useEffect
 useEffect(() => {
-  const handleNewProject = () => {
-    fetchProjects();
+  if (!connected) return;
+
+  const handleNewProject = (data?: any) => {
+    console.log("🆕 New project created – refreshing list", data);
+    fetchProjects();          // Refresh the full list
   };
-  onEvent('newProjectCreated', handleNewProject);
+
+  onEvent("newProjectCreated", handleNewProject);
+
   return () => {
-    // Cleanup
+    // If your useSocket has offEvent, use it:
+    // offEvent("newProjectCreated", handleNewProject);
   };
-}, [onEvent, fetchProjects]);
+}, [connected, onEvent, fetchProjects]);
+
+// Join global room so Sales TL receives new projects
+useEffect(() => {
+  if (connected) {
+    emitEvent("joinTlRoom", null);           // already present
+    // Optional: also join a specific sales room if you want
+    // emitEvent("joinSalesRoom", null);
+  }
+}, [connected, emitEvent]);
 
   // Initial fetch
   useEffect(() => {
@@ -516,30 +529,36 @@ useEffect(() => {
     }
   }, [connected, emitEvent, department]);
 
-  // Listen for new employee requests (for live updates in Requests tab)
-  useEffect(() => {
-    if (department !== "Technical") return;
+useEffect(() => {
+  if (department !== "Technical") return;
 
-    const handleNewEmployeeRequest = (data: RequestProps) => {
-      console.log('Received newEmployeeRequest:', data);  // Debug log
-      setRequests((prev) => {
-        // Check if request already exists to avoid duplicates
-        const exists = prev.some((req) => req.request_id === data.request_id);
-        if (exists) {
-          return prev;
-        }
-        // Add the new request (assuming it's pending)
-        return [...prev, { ...data, status: data.status || 'pending' }];
-      });
-      // No need to refetch unreadInfo for new pending requests
-    };
+  const handleNewEmployeeRequest = (data: any) => {
+    console.log("Received newEmployeeRequest:", data);
 
-    onEvent('newEmployeeRequest', handleNewEmployeeRequest);
+    setRequests((prev) => {
+      const exists = prev.some((req) => req.request_id === data.request_id);
+      if (exists) return prev;
 
-    return () => {
-      // Cleanup
-    };
-  }, [onEvent, department]);
+      const normalized = {
+        ...data,
+        status: data.status || "pending",
+        employeeId: data.employeeId ?? data.employeeid,
+        project_id: String(data.project_id),
+      };
+
+      return [...prev, normalized];
+    });
+
+    // Optional: play sound when new request comes
+    playNotificationSound();
+  };
+
+  onEvent("newEmployeeRequest", handleNewEmployeeRequest);
+
+  return () => {
+    // Cleanup if your useSocket supports offEvent
+  };
+}, [onEvent, department]);
 
   // Listen for request status updates
   useEffect(() => {
@@ -996,10 +1015,7 @@ const filteredItems =
   } as ProjectWithEmployees;
 })
       : activeTab === "Requests"
-        ? Object.values({
-            ...groupedPendingRequests,
-            ...groupedOngoingRequests, // ← Now shows pending + assigned/accepted requests
-          }).filter((item: GroupedRequestProps) =>
+  ? Object.values(groupedPendingRequests).filter((item: GroupedRequestProps) =>
             (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
               item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
               item.project_id.toString().includes(searchQuery) ||
@@ -1392,10 +1408,36 @@ const filteredItems =
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={item.workstream}
                               />
-                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                             <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
-    {"ID:"+item.project_id}
+    {"ID:" + item.project_id}
   </span>
+
+  {/* GREEN DOT for new pending request */}
+{/* GREEN DOT for new pending request */}
+{(() => {
+  const hasPending = requests.some(
+    (r) => String(r.project_id) === String(item.project_id) && r.status === "pending"
+  );
+  const notifKey = String(item.request_id ?? item.project_id);
+
+  return hasPending && !dismissedNotifications.has(notifKey) ? (
+    <span
+      className="relative flex h-3 w-3 cursor-pointer ml-2"
+      title="New employee request"
+      onClick={(e) => {
+        e.stopPropagation();
+        setDismissedNotifications(
+          (prev) => new Set([...prev, notifKey])
+        );
+      }}
+    >
+      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+      <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+    </span>
+  ) : null;
+})()}
+
 </div>
                             </div>
                             <div className="border-t-2 border-[#000000] w-full"></div>

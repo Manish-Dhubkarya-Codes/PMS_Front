@@ -228,31 +228,76 @@ const isWithinEditWindow = (msg: ChatMessage): boolean => {
 };
 
 const forwardFiles = async (timestamps: string[]) => {
-  if (!projectDetails?.project_id || !parsedData?.employeeId) return;
+  if (!projectDetails?.project_id || !parsedData?.employeeId || !socket || !connected) return;
 
   const projId = projectDetails.project_id;
   const teamleaderid = parsedData.employeeId;
 
-  for (const ts of timestamps) {
-    const msg = chatMessages.find((m) => m.timestamp === ts && m.type === "file" && m.file);
-    if (!msg?.file) continue;
+  let forwardedCount = 0;
 
-    const msgData = {
-      name: msg.file.name,
-      url: getRelativeUrl(msg.file.url),
-      type: msg.file.type,
-    };
+  for (const ts of timestamps) {
+    const msg = chatMessages.find((m) => m.timestamp === ts && !m.isDeleted);
+    if (!msg) continue;
+
+    const timestamp = new Date().toISOString();
+    const tempId = uuidv4();
 
     try {
-      await postData(`clientproject/add_tl_chat/${projId}`, {
-        type: "file",
-        data: msgData,          // ← This is correct
-        timestamp: new Date().toISOString(),
-        teamleaderid,
-      });
+      if (msg.type === "file" && msg.file) {
+        // ===== FORWARD FILE =====
+        const msgData = {
+          name: msg.file.name,
+          url: getRelativeUrl(msg.file.url),
+          type: msg.file.type,
+        };
+
+        // 1. Save to database
+        await postData(`clientproject/add_tl_chat/${projId}`, {
+          type: "file",
+          data: msgData,
+          timestamp,
+          teamleaderid,
+        });
+
+        // 2. Emit live to Client + Head
+        socket.emit("sendTLMessage", {
+          projectId: projId,
+          type: "file",
+          msgData: msgData,
+          timestamp,
+          teamleaderid,
+          tempId,
+        });
+
+      } else if (msg.type === "text" && msg.message) {
+        // ===== FORWARD TEXT =====
+        // 1. Save to database
+        await postData(`clientproject/add_tl_chat/${projId}`, {
+          type: "text",
+          data: msg.message,
+          timestamp,
+          teamleaderid,
+        });
+
+        // 2. Emit live to Client + Head
+        socket.emit("sendTLMessage", {
+          projectId: projId,
+          type: "text",
+          msgData: msg.message,
+          timestamp,
+          teamleaderid,
+          tempId,
+        });
+      }
+
+      forwardedCount++;
     } catch (err) {
-      console.error("Forward failed for", msg.file.name, err);
+      console.error("Forward failed", err);
     }
+  }
+
+  if (forwardedCount > 0) {
+    playNotification();
   }
 
   setSelectedFileTimestamps(new Set());
@@ -1548,7 +1593,11 @@ const getSenderInfo = (msg: ChatMessage) => {
       }}
       className=" w-fit px-3 py-1 text-[12px] cursor-pointer bg-blue-600/90 text-white rounded-full mr-4 hover:bg-blue-700"
     >
-      {isFileSelectionMode ? "Cancel" : <div className="flex items-center gap-x-2">Select Files <BiSolidSelectMultiple size={18}/></div>} 
+      {isFileSelectionMode ? "Cancel" : (
+  <div className="flex items-center gap-x-2">
+    Select Messages <BiSolidSelectMultiple size={18} />
+  </div>
+)} 
     </div>
     </div>
                 
@@ -1712,92 +1761,98 @@ const getSenderInfo = (msg: ChatMessage) => {
                     )}
 
                     {msg.isDeleted ? (
-                      <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
-                        <MdBlock size={14} /> {msg.isLeft ? "This message was deleted" : "You deleted this message"}
-                      </div>
-                    ) : (
-                      <>
-                        {msg.message && msg.type === "text" && (
-                          <div
-                            className="text-gray-900 leading-snug break-words hyphens-auto"
-                            dangerouslySetInnerHTML={{
-                              __html: DOMPurify.sanitize(highlightMessageText(msg.message)),
-                            }}
-                          />
-                        )}
+  <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+    <MdBlock size={14} /> {msg.isLeft ? "This message was deleted" : "You deleted this message"}
+  </div>
+) : (
+  <div className="relative">
+    {/* Checkbox for BOTH text and file messages */}
+    {isFileSelectionMode && (
+      <input
+        type="checkbox"
+        checked={selectedFileTimestamps.has(msg.timestamp)}
+        onChange={() => toggleFileSelect(msg.timestamp)}
+        className="absolute top-2 left-2 z-20 w-5 h-5 rounded border-2 border-blue-500 bg-white/90 checked:bg-blue-600 cursor-pointer"
+      />
+    )}
 
-                        {msg.file && msg.file.url && msg.file.name && (
-                          <div className="relative">
-                            {isFileSelectionMode && (
-                              <input
-                                type="checkbox"
-                                checked={selectedFileTimestamps.has(msg.timestamp)}
-                                onChange={() => toggleFileSelect(msg.timestamp)}
-                                className="absolute top-[13.3px] left-[16.5px] z-20 w-7 h-7 rounded-[10px] border-2 border-blue-500 bg-white/90 checked:bg-blue-600"
-                              />
-                            )}
-                            <div
-                              ref={index === msgControl ? divRef : null}
-                              onClick={() => setMsgControl(msgControl === index ? null : index)}
-                              className="group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985]"
-                            >
-                              <div className="flex items-center gap-3 px-3 py-2">
-                                {(() => {
-                                  const fileType = msg.file.type;
-                                  let Icon = FaFileInvoice;
-                                  let color = "text-slate-600";
+    {/* ===== TEXT MESSAGE ===== */}
+    {msg.type === "text" && msg.message && (
+      <div className={`${isFileSelectionMode ? "pl-8" : ""}`}>
+        <div
+          className="text-gray-900 leading-snug break-words hyphens-auto"
+          dangerouslySetInnerHTML={{
+            __html: DOMPurify.sanitize(highlightMessageText(msg.message)),
+          }}
+        />
+      </div>
+    )}
 
-                                  if (fileType.startsWith("audio/")) { Icon = FaFileAudio; color = "text-orange-500"; }
-                                  else if (fileType.startsWith("image/")) { Icon = FaFileImage; color = "text-emerald-500"; }
-                                  else if (fileType.startsWith("video/")) { Icon = FaFileVideo; color = "text-violet-500"; }
-                                  else if (fileType === "application/pdf") { Icon = FaFilePdf; color = "text-rose-500"; }
-                                  else if (fileType === "application/msword" || fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") { Icon = FaFileWord; color = "text-sky-600"; }
-                                  else if (fileType === "application/zip") { Icon = FaFileArchive; color = "text-amber-500"; }
-                                  else if (fileType === "text/html") { Icon = FaRegFileAlt; color = "text-amber-500"; }
+    {/* ===== FILE MESSAGE ===== */}
+    {msg.file && msg.file.url && msg.file.name && (
+      <div className={`${isFileSelectionMode ? "ml-7" : ""}`}>
+        <div
+          ref={index === msgControl ? divRef : null}
+          onClick={() => setMsgControl(msgControl === index ? null : index)}
+          className="group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985]"
+        >
+          <div className="flex items-center gap-3 px-3 py-2">
+            {(() => {
+              const fileType = msg.file.type;
+              let Icon = FaFileInvoice;
+              let color = "text-slate-600";
 
-                                  return (
-                                    <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}>
-                                      <Icon size={18} />
-                                    </div>
-                                  );
-                                })()}
+              if (fileType.startsWith("audio/")) { Icon = FaFileAudio; color = "text-orange-500"; }
+              else if (fileType.startsWith("image/")) { Icon = FaFileImage; color = "text-emerald-500"; }
+              else if (fileType.startsWith("video/")) { Icon = FaFileVideo; color = "text-violet-500"; }
+              else if (fileType === "application/pdf") { Icon = FaFilePdf; color = "text-rose-500"; }
+              else if (fileType === "application/msword" || fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") { Icon = FaFileWord; color = "text-sky-600"; }
+              else if (fileType === "application/zip") { Icon = FaFileArchive; color = "text-amber-500"; }
+              else if (fileType === "text/html") { Icon = FaRegFileAlt; color = "text-amber-500"; }
 
-                                <div className="flex-1 min-w-0">
-                                  <p className="truncate text-[13px] font-medium text-slate-800">{msg.file.name}</p>
-                                  <p className="text-[10px] uppercase tracking-wide text-slate-400">{getReadableFileType(msg.file.type)}</p>
-                                </div>
-                              </div>
+              return (
+                <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}>
+                  <Icon size={18} />
+                </div>
+              );
+            })()}
 
-                              {(() => {
-                                const fileType = msg.file.type;
-                                const url = msg.file.url.startsWith("blob:") ? msg.file.url : `${msg.file.url}`;
-                                const name = msg.file.name;
+            <div className="flex-1 min-w-0">
+              <p className="truncate text-[13px] font-medium text-slate-800">{msg.file.name}</p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-400">{getReadableFileType(msg.file.type)}</p>
+            </div>
+          </div>
 
-                                if (fileType.startsWith("audio/")) {
-                                  return <div className="px-3 py-2 border-t border-gray-200"><audio controls src={url} className="min-w-[150px] max-w-full" /></div>;
-                                } else if (fileType.startsWith("image/")) {
-                                  return (
-                                    <div className="px-0 pb-2 relative border-t border-gray-200 h-[100px] flex items-center justify-center">
-                                      <img src={url} alt={name} className="max-h-full max-w-full object-contain" />
-                                      {msgControl === index && (
-                                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-                                          <ActionBar msg={msg} index={index} url={url} name={name} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                } else if (fileType.startsWith("video/")) {
-                                  return <div className="px-0 py-0 border-t border-gray-200"><video controls src={url} className="w-full max-h-[100px] object-contain" /></div>;
-                                } else if (["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)) {
-                                  return <div className="px-3 flex items-center justify-center">{msgControl === index && <ActionBar msg={msg} index={index} url={url} name={name} />}</div>;
-                                }
-                                return null;
-                              })()}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
+          {(() => {
+            const fileType = msg.file.type;
+            const url = msg.file.url.startsWith("blob:") ? msg.file.url : `${msg.file.url}`;
+            const name = msg.file.name;
+
+            if (fileType.startsWith("audio/")) {
+              return <div className="px-3 py-2 border-t border-gray-200"><audio controls src={url} className="min-w-[150px] max-w-full" /></div>;
+            } else if (fileType.startsWith("image/")) {
+              return (
+                <div className="px-0 pb-2 relative border-t border-gray-200 h-[100px] flex items-center justify-center">
+                  <img src={url} alt={name} className="max-h-full max-w-full object-contain" />
+                  {msgControl === index && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+                      <ActionBar msg={msg} index={index} url={url} name={name} />
+                    </div>
+                  )}
+                </div>
+              );
+            } else if (fileType.startsWith("video/")) {
+              return <div className="px-0 py-0 border-t border-gray-200"><video controls src={url} className="w-full max-h-[100px] object-contain" /></div>;
+            } else if (["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)) {
+              return <div className="px-3 flex items-center justify-center">{msgControl === index && <ActionBar msg={msg} index={index} url={url} name={name} />}</div>;
+            }
+            return null;
+          })()}
+        </div>
+      </div>
+    )}
+  </div>
+)}
 
                     <div className={`text-xs text-gray-500 mt-1 ${msg.isLeft ? "text-left" : "text-right"}`}>
                       {msg.edited && !msg.isDeleted && (

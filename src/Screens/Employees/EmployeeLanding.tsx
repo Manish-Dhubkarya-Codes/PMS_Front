@@ -75,6 +75,7 @@ const EmployeeLanding: React.FC = () => {
   const [renderDrawer, setRenderDrawer] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
     const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
+    const [newAcceptedCount, setNewAcceptedCount] = useState(0);
   const [activeTab, setActiveTab] = useState(() => {
   return localStorage.getItem("employeeLandingActiveTab") || tabs[0];
 });
@@ -213,59 +214,69 @@ const EmployeeLanding: React.FC = () => {
     }
   }, [connected, emitEvent]);
 
-  // Listen for request status updates
-  useEffect(() => {
-    const handleRequestStatusUpdate = (data: { request_id: number; status: string; project_id?: string; employeeid?: number }) => {
-      setEmployeeRequests((prev) =>
-        prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
-      );
-      setAllEmployeeRequests((prev) =>
-        prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
-      );
-      fetchUnreadForRequests();
-    };
-
-    onEvent('employeeRequestStatusUpdate', handleRequestStatusUpdate);
-
-    return () => {
-      // Cleanup listener if needed
-    };
-  }, [onEvent, fetchUnreadForRequests]);
-
-  // Listen for new TL monitor messages
-  useEffect(() => {
-    const handleNewTlMonitorMessage = (data: { fromRole: 'tl' | 'monitor'; msg: any; projectId?: string }) => {
-      if (data.fromRole !== 'tl' || !data.projectId) return;
-
-      fetchUnreadForRequests();
-    };
-
-    onEvent('newTLMonitorMessage', handleNewTlMonitorMessage);  // Match backend casing
-
-    return () => {
-      // Cleanup listener if needed
-    };
-  }, [onEvent, fetchUnreadForRequests]);
-
-  // Listen for TL monitor message seen
-  useEffect(() => {
-    const handleTlMonitorMessageSeen = (data: { fromTL: boolean; seen_by: string[]; timestamp?: string; projectId?: string }) => {
-      if (!data.projectId) return;
-      fetchUnreadForRequests();
-    };
-
-    onEvent('tlMonitorMessageSeen', handleTlMonitorMessageSeen);
-
-    return () => {
-      // Cleanup listener if needed
-    };
-  }, [onEvent, fetchUnreadForRequests]);
-
   useEffect(() => {
   if (employeeRequests.length > 0) {
     fetchUnreadForRequests();
   }
 }, [employeeRequests.length]); // runs only when the list first becomes non-empty
+
+// ========== LIVE UNREAD COUNT VIA SOCKET (NO API CALL) ==========
+useEffect(() => {
+  if (!connected) return;
+
+  const handleNewTlMessage = (data: {
+    fromRole: string;
+    msg: any;
+    projectId?: string;
+  }) => {
+    if (data.fromRole !== "tl" || !data.projectId) return;
+
+    // Already seen by this employee → ignore
+    if (
+      data.msg?.seen_by?.includes("monitor") ||
+      data.msg?.seen_by?.includes("employee")
+    ) {
+      return;
+    }
+
+    setUnreadRequests(prev => {
+      const current = prev[data.projectId!] || {
+        unreadFromTL: 0,
+        tlName: "Team Leader",
+      };
+      return {
+        ...prev,
+        [data.projectId!]: {
+          ...current,
+          unreadFromTL: current.unreadFromTL + 1,
+        },
+      };
+    });
+  };
+
+const handleSeen = (data: { projectId?: string; seen_by?: string[] }) => {
+  if (!data.projectId) return;
+
+  // When messages are marked as seen by the employee, clear unread count for that project
+  setUnreadRequests((prev) => {
+    const current = prev[data.projectId!];
+    if (!current) return prev;
+
+    return {
+      ...prev,
+      [data.projectId!]: {
+        ...current,
+        unreadFromTL: 0,          // clear the count
+      },
+    };
+  });
+};
+
+  onEvent("newTLMonitorMessage", handleNewTlMessage);
+  onEvent("tlMonitorMessageSeen", handleSeen);
+
+  return () => {};
+}, [connected, onEvent]);
 
   // Join shared chat rooms for all projects the employee is involved in
 useEffect(() => {
@@ -336,61 +347,67 @@ useEffect(() => {
     fetchEmployeeRequests();
   }, [fetchEmployeeRequests]);
 
-  // Initial fetch unread
-  useEffect(() => {
-    fetchUnreadForRequests();
-  }, [fetchUnreadForRequests]);
+// === LIVE SOCKET UPDATES FOR ALL TABS ===
+useEffect(() => {
+  if (!connected) return;
 
-    // === LIVE SOCKET UPDATES FOR ALL TABS ===
-  useEffect(() => {
-    const handleNewProjectActivated = (newProject: ProjectDetailsProps) => {
-      setProjectDetails((prev) => {
-        if (prev.some((p) => String(p.project_id) === String(newProject.project_id))) return prev;
-        return [...prev, newProject];
+  // When a new project is created (or activated)
+  const handleNewProject = () => {
+    console.log("🆕 New project received – refreshing Active list");
+    fetchProjectData();               // full refresh so Active tab updates correctly
+  };
+
+  // When project status changes (Hold → Active, Active → Completed, etc.)
+  const handleProjectStatusUpdated = (data: { project_id: string | number; status: string }) => {
+    console.log("🔄 Project status updated", data);
+    setProjectDetails((prev) =>
+      prev.map((project) =>
+        String(project.project_id) === String(data.project_id)
+          ? { ...project, status: data.status }
+          : project
+      )
+    );
+    // Also do a full refresh to be safe
+    fetchProjectData();
+  };
+
+  const handleNewEmployeeRequest = (newRequest: ProjectRequestProps) => {
+    if (employeeData?.employeeId && String(newRequest.employeeid) === String(employeeData.employeeId)) {
+      setEmployeeRequests((prev) => {
+        if (prev.some((r) => r.request_id === newRequest.request_id)) return prev;
+        return [...prev, newRequest];
       });
-    };
+    }
+  };
 
-    const handleProjectStatusUpdated = (data: { project_id: string | number; status: string }) => {
-      setProjectDetails((prev) =>
-        prev.map((project) =>
-          String(project.project_id) === String(data.project_id)
-            ? { ...project, status: data.status }
-            : project
-        )
-      );
+const handleRequestStatusUpdate = (data: { request_id: number; status: string }) => {
+  setEmployeeRequests((prev) =>
+    prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
+  );
+  setAllEmployeeRequests((prev) =>
+    prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
+  );
+
+  // Show notification on Accepted tab when a request is accepted
+  if (data.status === "accepted") {
+    setNewAcceptedCount((prev) => prev + 1);
+
+    setTimeout(() => {
       fetchUnreadForRequests();
-    };
+    }, 300);
+  }
+};
 
-    const handleNewEmployeeRequest = (newRequest: ProjectRequestProps) => {
-      if (employeeData?.employeeId && String(newRequest.employeeid) === String(employeeData.employeeId)) {
-        setEmployeeRequests((prev) => {
-          if (prev.some((r) => r.request_id === newRequest.request_id)) return prev;
-          return [...prev, newRequest];
-        });
-      }
-    };
+  onEvent("newProjectCreated", handleNewProject);
+  onEvent("newProjectActivated", handleNewProject);
+  onEvent("projectStatusUpdated", handleProjectStatusUpdated);
+  onEvent("newEmployeeRequest", handleNewEmployeeRequest);
+  onEvent("employeeRequestStatusUpdate", handleRequestStatusUpdate);
 
-    const handleRequestStatusUpdate = (data: { request_id: number; status: string }) => {
-      setEmployeeRequests((prev) =>
-        prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
-      );
-      setAllEmployeeRequests((prev) =>
-        prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
-      );
-      fetchUnreadForRequests();
-    };
-
-    const cleanups = [
-      onEvent("newProjectActivated", handleNewProjectActivated),
-      onEvent("projectStatusUpdated", handleProjectStatusUpdated),
-      onEvent("newEmployeeRequest", handleNewEmployeeRequest),
-      onEvent("employeeRequestStatusUpdate", handleRequestStatusUpdate),
-    ];
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [onEvent, employeeData?.employeeId, fetchUnreadForRequests]);
+  return () => {
+    // cleanup if your useSocket supports it
+  };
+}, [connected, onEvent, employeeData?.employeeId, fetchProjectData, fetchUnreadForRequests]);
 
     // 🔥 FORCE LIVE UPDATE FOR UNREAD COUNT BADGE ON ACCEPTED TAB
 // Only fetch once when the user opens Accepted or Requested tab
@@ -398,7 +415,12 @@ useEffect(() => {
   if (activeTab === "Accepted" || activeTab === "Requested") {
     fetchUnreadForRequests();
   }
-}, [activeTab]); // ← only activeTab
+
+  // Clear "new accepted" badge when user opens Accepted tab
+  if (activeTab === "Accepted") {
+    setNewAcceptedCount(0);
+  }
+}, [activeTab]);
 
 useEffect(() => {
   const checkRole = async () => {
@@ -485,16 +507,18 @@ const projectStatusMap = useMemo(() =>
 );
 
 // Update the acceptedUnreadTotal useMemo
-const acceptedUnreadTotal = useMemo(() => 
-  acceptedProjects.reduce((sum, pid) => {
+// Badge on Accepted tab = newly accepted requests + unread messages
+const acceptedUnreadTotal = useMemo(() => {
+  const unreadMsgCount = acceptedProjects.reduce((sum, pid) => {
     const status = projectStatusMap[pid];
     if (status !== "Completed") {
       return sum + (unreadRequests[pid]?.unreadFromTL || 0);
     }
     return sum;
-  }, 0),
-  [acceptedProjects, unreadRequests, projectStatusMap]
-);
+  }, 0);
+
+  return unreadMsgCount + newAcceptedCount;
+}, [acceptedProjects, unreadRequests, projectStatusMap, newAcceptedCount]);
 
 const requestedUnreadTotal = useMemo(() => 
   requestedProjects.reduce((sum, pid) => {
@@ -715,7 +739,28 @@ const activeUnreadTotal = 0;
                       className={`cursor-pointer flex justify-start items-start ${
                         index === currentItems.length - 1 ? "mt-7" : "my-7"
                       } w-full min-w-[700px] flex-col`}
-                      onClick={() => navigate(`/employeeprojectinfo`, { state: { item } })}
+onClick={() => {
+  // Clear unread count for this project when opening it
+  setUnreadRequests((prev) => {
+    const current = prev[item.project_id];
+    if (!current) return prev;
+    return {
+      ...prev,
+      [item.project_id]: {
+        ...current,
+        unreadFromTL: 0,
+      },
+    };
+  });
+
+  // Clear the "new accepted" notification
+  setNewAcceptedCount(0);
+
+  // Also dismiss the green dot
+  setDismissedNotifications((prev) => new Set([...prev, String(item.project_id)]));
+
+  navigate(`/employeeprojectinfo`, { state: { item } });
+}}
                     >
                       <div className="flex flex-col-reverse items-start justify-start w-full">
 <div className="w-full flex items-start justify-between">

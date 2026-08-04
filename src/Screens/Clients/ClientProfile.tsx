@@ -707,77 +707,47 @@ const IconChat = () => (
                             text={`${is2XL ? "text-[15px]" : "text-[12px]"} `}
                             value={item.Workstream}
                           />
-                          <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                        <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+item.ProjectId}
   </span>
-  </div>
-</div>
-{totalUnreadForProject > 0 && !dismissedNotifications.has(item.ProjectId) && (
-  <div className="relative w-fit max-w-xs ml-2">
-    <div className="relative flex space-x-3 space-y-1 bg-blue-50 border border-blue-200 rounded-lg p-3 shadow-md">
 
-      {/* Pointer Triangle */}
-      <div className="absolute -bottom-[11px] left-[3px] w-0 h-0 border-l-[7px] border-r-[7px] border-t-[8px] border-l-transparent border-r-transparent border-t-blue-200"></div>
-      <div className="absolute -bottom-[9px] left-[4px] w-0 h-0 border-l-[6px] border-r-[6px] border-t-[7px] border-l-transparent border-r-transparent border-t-blue-50"></div>
+  {/* GREEN + BLUE DOTS */}
+  {!dismissedNotifications.has(item.ProjectId) && (
+    <div className="flex items-center gap-1.5 ml-1.5">
+      {/* GREEN DOT - New messages */}
+      {(item.unreadFromHead + item.unreadFromTL) > 0 && (
+        <span
+          className="relative flex h-3 w-3 cursor-pointer"
+          title="New message"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDismissedNotifications((prev) => new Set([...prev, item.ProjectId]));
+          }}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+        </span>
+      )}
 
-      {/* Close Button */}
-       <MdCancel
-           size={22}
-        onClick={(e) => {
-          e.stopPropagation();
-          setDismissedNotifications((prev) => new Set([...prev, item.ProjectId]));
-        }}
-        className="absolute top-1.5 right-0 text-gray-400 hover:text-red-500 
-                   hover:bg-red-100 rounded-full p-0.5 
-                   transition-all duration-200 cursor-pointer"
-      />
-
-      {/* Count badge */}
-      <span className="flex items-center justify-center w-7 h-7 text-sm font-bold text-white bg-green-500 rounded-full self-start">
-        {totalUnreadForProject}
-      </span>
-
-      {/* Text content — pr-4 so text doesn't run under the close button */}
-      <div className="flex flex-col space-y-1.5 pr-4">
-        {item.hasSOWFromHead && (
-          <div className="flex items-center space-x-1.5">
-            <IconAt />
-            <span className="text-xs text-blue-700 font-medium">Head send SOW</span>
-          </div>
-        )}
-        {item.hasMentionFromHead && (
-          <div className="flex items-center space-x-1.5">
-            <IconAt />
-            <span className="text-xs text-blue-700 font-medium">Head tagged you.</span>
-          </div>
-        )}
-        {item.hasMentionFromTL && (
-          <div className="flex items-center space-x-1.5">
-            <IconAt />
-            <span className="text-xs text-blue-700 font-medium">Team Leader tagged you.</span>
-          </div>
-        )}
-        {item.unreadFromHead > 0 && !item.hasMentionFromHead && !item.hasSOWFromHead && (
-          <div className="flex items-center space-x-1.5">
-            <IconChat />
-            <span className="text-xs text-gray-700">
-              New message{item.unreadFromHead > 1 ? "s" : ""} from Head
-            </span>
-          </div>
-        )}
-        {item.unreadFromTL > 0 && !item.hasMentionFromTL && (
-          <div className="flex items-center space-x-1.5">
-            <IconChat />
-            <span className="text-xs text-gray-700">
-              New message{item.unreadFromTL > 1 ? "s" : ""} from TL
-            </span>
-          </div>
-        )}
-      </div>
+      {/* BLUE DOT - You were tagged */}
+      {(item.hasMentionFromHead || item.hasMentionFromTL) && (
+        <span
+          className="relative flex h-3 w-3 cursor-pointer"
+          title="You were tagged"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDismissedNotifications((prev) => new Set([...prev, item.ProjectId]));
+          }}
+        >
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500" />
+        </span>
+      )}
     </div>
-  </div>
-)}
+  )}
+</div>
+</div>
 
                         </div>
                         <div className="border-t-2 border-[#000000] w-full"></div>

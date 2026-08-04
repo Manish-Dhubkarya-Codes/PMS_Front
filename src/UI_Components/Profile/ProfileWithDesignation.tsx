@@ -140,7 +140,7 @@ const handleDeclineClick = () => {
       {/* Dropdown Menu */}
 {(onRemoveEmployee || isTeamLeader || onRemoveAsTL || onPromoteToTL) && (
   <div className="absolute -top-1 left-25 z-20">
-    <button
+    <div
       type="button"
       className="
         w-8 h-8
@@ -159,7 +159,7 @@ const handleDeclineClick = () => {
       aria-label="More options"
     >
       <FaEllipsisV size={14} />
-    </button>
+    </div>
     {showMenu && (
       <div className="profile-menu absolute right-0 top-6 bg-white border border-gray-200 rounded-xl shadow-xl z-50 min-w-[170px] overflow-hidden">
         {onRemoveEmployee && (

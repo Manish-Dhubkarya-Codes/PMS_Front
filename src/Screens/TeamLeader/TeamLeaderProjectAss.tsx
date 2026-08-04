@@ -55,6 +55,7 @@ const TeamLeaderProjectAss: React.FC = () => {
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
   const [errorRequests, setErrorRequests] = useState<string | null>(null);
+  const [isRefreshingEmployees, setIsRefreshingEmployees] = useState(false);
 
   const projectInfo: GroupedRequestProps = selectedRequest || {
     workstream: "N/A",
@@ -109,24 +110,29 @@ const TeamLeaderProjectAss: React.FC = () => {
     fetchProjectRequests();
   }, [projectInfo.project_id]);
 
-  useEffect(() => {
-    const fetchAllEmployees = async () => {
-      if (projectInfo.project_id && projectInfo.project_id !== "N/A") {
-        try {
-          const response = await getData(`employees/fetch_all_employees?project_id=${projectInfo.project_id}`);
-          console.log("Fetched all employees:", response);
-          if (response.status) {
-            setAllEmployees(response.data);
-          } else {
-            console.error("Failed to fetch all employees:", response.message);
-          }
-        } catch (error) {
-          console.error("Error fetching all employees:", error);
-        }
+const fetchAllEmployees = async () => {
+  if (projectInfo.project_id && projectInfo.project_id !== "N/A") {
+    setIsRefreshingEmployees(true);
+    try {
+      const response = await getData(
+        `employees/fetch_all_employees?project_id=${projectInfo.project_id}`
+      );
+      if (response.status) {
+        setAllEmployees(response.data);
+      } else {
+        console.error("Failed to fetch all employees:", response.message);
       }
-    };
-    fetchAllEmployees();
-  }, [projectInfo.project_id]);
+    } catch (error) {
+      console.error("Error fetching all employees:", error);
+    } finally {
+      setIsRefreshingEmployees(false);
+    }
+  }
+};
+
+useEffect(() => {
+  fetchAllEmployees();
+}, [projectInfo.project_id]);
 
   const isXXS = width <= 480;
   const isXS = width > 480 && width <= 640;
@@ -433,21 +439,47 @@ const TeamLeaderProjectAss: React.FC = () => {
                 is2XL || isXL ? "pl-6 w-[35%]" : "mt-4"
               } items-start`}
             >
-              <div
-                className={`text-black ${
-                  isXXS || isXS || isSM
-                    ? "text-[14px]"
-                    : isMD
-                    ? "text-[14px]"
-                    : isLG
-                    ? "text-[14px]"
-                    : is2XL || isXL
-                    ? "text-[16px]"
-                    : ""
-                } pt-[2vh] font-medium -tracking-[0.02rem]`}
-              >
-                Self Assign
-              </div>
+              <div className="flex items-center justify-between w-full pt-[2vh]">
+  <div
+    className={`text-black ${
+      isXXS || isXS || isSM
+        ? "text-[14px]"
+        : isMD
+        ? "text-[14px]"
+        : isLG
+        ? "text-[14px]"
+        : is2XL || isXL
+        ? "text-[16px]"
+        : ""
+    } font-medium -tracking-[0.02rem]`}
+  >
+    Self Assign
+  </div>
+
+  {/* Refresh Button */}
+  <div
+    onClick={fetchAllEmployees}
+    className={`flex items-center cursor-pointer gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all ${
+      isRefreshingEmployees ? "opacity-50 cursor-not-allowed" : ""
+    }`}
+    title="Refresh employee list"
+  >
+    <svg
+      className={`w-3.5 h-3.5 ${isRefreshingEmployees ? "animate-spin" : ""}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+      />
+    </svg>
+    {isRefreshingEmployees ? "Refreshing..." : "Refresh"}
+  </div>
+</div>
               <div className="w-full">
                 <EmployeeSearchBar value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
               </div>

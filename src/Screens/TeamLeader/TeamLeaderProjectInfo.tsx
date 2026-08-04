@@ -173,6 +173,7 @@ const dept = deptMatch ? deptMatch[1].trim() : null;
   const [selectedDesignation, setSelectedDesignation] = useState<string>("");
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [isRefreshingEmployees, setIsRefreshingEmployees] = useState(false);
   const [errorRequests, setErrorRequests] = useState<string | null>(null);
   const divRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -245,38 +246,59 @@ const forwardFiles = async (timestamps: string[]) => {
   let forwardedCount = 0;
 
   for (const ts of timestamps) {
-    const msg = chatMessages.find((m) => m.timestamp === ts && m.type === "file" && m.file);
-    if (!msg?.file) continue;
+    const msg = chatMessages.find((m) => m.timestamp === ts && !m.isDeleted);
+    if (!msg) continue;
 
-    const msgData = {
-      name: msg.file.name,
-      url: getRelativeUrl(msg.file.url),
-      type: msg.file.type,
-    };
+    const timestamp = new Date().toISOString();
 
     try {
-      await postData(`clientproject/add_tl_chat_to_monitor/${projId}`, {
-        type: "file",
-        data: msgData,
-        timestamp: new Date().toISOString(),
-        teamleaderid,
-      });
+      if (msg.type === "file" && msg.file) {
+        // ===== FORWARD FILE =====
+        const msgData = {
+          name: msg.file.name,
+          url: getRelativeUrl(msg.file.url),
+          type: msg.file.type,
+        };
 
-      forwardedCount++;
-
-      // 🔥 CRITICAL: Emit the same event that sub-chat listens to
-      socket.emit("newTLMonitorMessage", {
-        fromRole: "tl",
-        msg: {
-          id: Date.now(),                    // temporary id
+        await postData(`clientproject/add_tl_chat_to_monitor/${projId}`, {
           type: "file",
           data: msgData,
-          timestamp: new Date().toISOString(),
-          seen_by: [],
-          replyTo: null,
-        },
-      });
+          timestamp,
+          teamleaderid,
+        });
 
+        socket.emit("sendTLToMonitorMessage", {
+          projectId: projId,
+          type: "file",
+          msgData,
+          timestamp,
+          senderId: teamleaderid,
+          senderName: parsedData?.employeeName || "Team Leader",
+          tempId: uuidv4(),
+          replyTo: null,
+        });
+      } else if (msg.type === "text" && msg.message) {
+        // ===== FORWARD TEXT =====
+        await postData(`clientproject/add_tl_chat_to_monitor/${projId}`, {
+          type: "text",
+          data: msg.message,
+          timestamp,
+          teamleaderid,
+        });
+
+        socket.emit("sendTLToMonitorMessage", {
+          projectId: projId,
+          type: "text",
+          msgData: msg.message,
+          timestamp,
+          senderId: teamleaderid,
+          senderName: parsedData?.employeeName || "Team Leader",
+          tempId: uuidv4(),
+          replyTo: null,
+        });
+      }
+
+      forwardedCount++;
     } catch (err) {
       console.error("Forward failed", err);
     }
@@ -842,8 +864,8 @@ useEffect(() => {
   }, [projectDetails?.project_id]);
 const fetchAllEmployees = async () => {
   if (item?.project_id && item.project_id !== "N/A") {
-    setIsLoadingRequests(true); // Start loading
-    setErrorRequests(null); // Clear any previous errors
+    setIsRefreshingEmployees(true);   // ← only for Self Assign
+    setErrorRequests(null);
     try {
       const response = await getData(
         `employees/fetch_all_employees?project_id=${item.project_id}`
@@ -851,13 +873,13 @@ const fetchAllEmployees = async () => {
       if (response.status) {
         setAllEmployees(response.data);
       } else {
-        setErrorRequests(response.message || "Failed to fetch all employees"); // Set error if no success
+        setErrorRequests(response.message || "Failed to fetch all employees");
       }
     } catch (error) {
       console.error("Error fetching all employees:", error);
-      setErrorRequests("Error fetching all employees. Please try again."); // Set error on exception
+      setErrorRequests("Error fetching all employees. Please try again.");
     } finally {
-      setIsLoadingRequests(false); // Always stop loading
+      setIsRefreshingEmployees(false);  // ← only for Self Assign
     }
   }
 };
@@ -2273,7 +2295,7 @@ useEffect(() => {
       }}
       className="w-fit px-3 py-1 text-[12px] cursor-pointer bg-blue-600/90 text-white rounded-full mr-4 hover:bg-blue-700"
     >
-      {isFileSelectionMode ? "Cancel" : <div className="flex items-center gap-x-2">Select Files <BiSolidSelectMultiple size={18}/></div>} 
+      {isFileSelectionMode ? "Cancel" : <div className="flex items-center gap-x-2">Select Messages <BiSolidSelectMultiple size={18}/></div>} 
     </div>
   </div>
     <div
@@ -2425,174 +2447,170 @@ useEffect(() => {
                           </div>
                         </div>
                       )}
-                      {msg.isDeleted ? (
-                        <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
-                          <MdBlock size={14} />
-                          {!msg.isLeft ? "You deleted this message" : "This message was deleted"}
-                        </div>
-                      ) : (
-                        <>
-                          {msg.type === "text" && msg.message && (
-                            <div
-                              className="text-gray-900 leading-snug break-words hyphens-auto"
-                              dangerouslySetInnerHTML={{
-                                __html: DOMPurify.sanitize(
-                                  highlightMessageText(
-                                    msg.message || "",
-                                    msg.mention
-                                  )
-                                ),
-                              }}
-                            />
-                          )}
-                        </>
-                      )}
-                      {/* here-- */}
-                      {msg.file &&
-                        msg.file.url &&
-                        msg.file.name &&
-                        !msg.isDeleted && (
-                          <div className="relative">
-                            {isFileSelectionMode && (
-                              <input
-                                type="checkbox"
-                                checked={selectedFileTimestamps.has(msg.timestamp)}
-                                onChange={() => toggleFileSelect(msg.timestamp)}
-                                className={`absolute top-[13.3px] left-[16.5px] z-20 w-7 h-7 rounded-[10px] border-2 border-blue-500 bg-white/90 checked:bg-blue-600`}
-                              />
-                            )}
-                            <div
-                              ref={index === msgControl ? divRef : null}
-                              onClick={() =>
-                                setMsgControl(
-                                  msgControl === index ? null : index
-                                )
-                              }
-                              className="
-                                group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden
-                                rounded-xl border border-slate-200 bg-white
-                                transition-all duration-300 ease-out
-                                hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)]
-                                active:scale-[0.985]
-                              "
-                            >
-                              {/* HEADER */}
-                              <div className="flex items-center gap-3 px-3 py-2">
-                                {(() => {
-                                  const fileType = msg.file.type;
-                                  let Icon = FaFileInvoice;
-                                  let color = "text-slate-600";
 
-                                  if (fileType.startsWith("audio/")) {
-                                    Icon = FaFileAudio;
-                                    color = "text-orange-500";
-                                  } else if (fileType.startsWith("image/")) {
-                                    Icon = FaFileImage;
-                                    color = "text-emerald-500";
-                                  } else if (fileType.startsWith("video/")) {
-                                    Icon = FaFileVideo;
-                                    color = "text-violet-500";
-                                  } else if (fileType === "application/pdf") {
-                                    Icon = FaFilePdf;
-                                    color = "text-rose-500";
-                                  } else if (
-                                    fileType === "application/msword" ||
-                                    fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                  ) {
-                                    Icon = FaFileWord;
-                                    color = "text-sky-600";
-                                  } else if (fileType === "application/zip") {
-                                    Icon = FaFileArchive;
-                                    color = "text-amber-500";
-                                  } else if (fileType === "text/html") {
-                                    Icon = FaRegFileAlt;
-                                    color = "text-amber-500";
-                                  }
+{/* ==================== SELECTION CHECKBOX + MESSAGE CONTENT ==================== */}
+{!msg.isDeleted && (
+  <div className="relative">
+    {/* Checkbox for BOTH text and file messages */}
+    {isFileSelectionMode && (
+      <input
+        type="checkbox"
+        checked={selectedFileTimestamps.has(msg.timestamp)}
+        onChange={() => toggleFileSelect(msg.timestamp)}
+        className="absolute top-2 left-2 z-20 w-5 h-5 rounded border-2 border-blue-500 bg-white/90 checked:bg-blue-600 cursor-pointer"
+      />
+    )}
 
-                                  return (
-                                    <div
-                                      className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}
-                                    >
-                                      <Icon size={18} />
-                                    </div>
-                                  );
-                                })()}
+    {/* ===== TEXT MESSAGE ===== */}
+    {msg.type === "text" && msg.message && (
+      <div
+        className={`p-3 rounded-2xl ${
+          msg.isLeft
+            ? "bg-white rounded-tl-none border-l-blue-600/30 border-l-[3px]"
+            : "bg-[#fffddc] rounded-br-none border-r-yellow-600/30 border-r-[3px]"
+        } shadow-sm ${isFileSelectionMode ? "pl-9" : ""}`}
+      >
+        <div
+          className="text-gray-900 leading-snug break-words hyphens-auto"
+          dangerouslySetInnerHTML={{
+            __html: DOMPurify.sanitize(
+              highlightMessageText(msg.message || "", msg.mention)
+            ),
+          }}
+        />
+      </div>
+    )}
 
-                                <div className="flex-1 min-w-0">
-                                  <p className="truncate text-[13px] font-medium text-slate-800">
-                                    {msg.file.name}
-                                  </p>
-                                  <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                                    {getReadableFileType(msg.file.type)}
-                                  </p>
-                                </div>
-                              </div>
+    {/* ===== FILE MESSAGE ===== */}
+    {msg.file && msg.file.url && msg.file.name && (
+      <div
+        ref={index === msgControl ? divRef : null}
+        onClick={() => setMsgControl(msgControl === index ? null : index)}
+        className={`
+          group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden
+          rounded-xl border border-slate-200 bg-white
+          transition-all duration-300 ease-out
+          hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)]
+          active:scale-[0.985]
+          ${isFileSelectionMode ? "ml-7" : ""}
+        `}
+      >
+        {/* HEADER */}
+        <div className="flex items-center gap-3 px-3 py-2">
+          {(() => {
+            const fileType = msg.file.type;
+            let Icon = FaFileInvoice;
+            let color = "text-slate-600";
 
-                              {/* PREVIEW */}
-                              {(() => {
-                                const fileType = msg.file.type;
-                                const url = msg.file.url.startsWith("blob:")
-                                  ? msg.file.url
-                                  : `${msg.file.url}`;
-                                const name = msg.file.name;
+            if (fileType.startsWith("audio/")) {
+              Icon = FaFileAudio;
+              color = "text-orange-500";
+            } else if (fileType.startsWith("image/")) {
+              Icon = FaFileImage;
+              color = "text-emerald-500";
+            } else if (fileType.startsWith("video/")) {
+              Icon = FaFileVideo;
+              color = "text-violet-500";
+            } else if (fileType === "application/pdf") {
+              Icon = FaFilePdf;
+              color = "text-rose-500";
+            } else if (
+              fileType === "application/msword" ||
+              fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ) {
+              Icon = FaFileWord;
+              color = "text-sky-600";
+            } else if (fileType === "application/zip") {
+              Icon = FaFileArchive;
+              color = "text-amber-500";
+            } else if (fileType === "text/html") {
+              Icon = FaRegFileAlt;
+              color = "text-amber-500";
+            }
 
-                                if (fileType.startsWith("audio/")) {
-                                  return (
-                                    <div className="px-3 pb-2">
-                                      <audio
-                                        controls
-                                        src={url}
-                                        className="block h-7 w-full opacity-80 hover:opacity-100 m-0 p-0"
-                                      />
-                                    </div>
-                                  );
-                                } else if (fileType.startsWith("image/")) {
-                                  return (
-                                    <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
-                                      <img
-                                        src={url}
-                                        alt={name}
-                                        className="aspect-video w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                                      />
-                                      {msgControl === index && (
-                                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-                                          <ActionBar msg={msg} index={index} url={url} name={name} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                } else if (fileType.startsWith("video/")) {
-                                  return (
-                                    <div className="mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
-                                      <video
-                                        controls
-                                        src={url}
-                                        className="block aspect-video w-full object-cover bg-black m-0"
-                                      />
-                                    </div>
-                                  );
-                                } else {
-                                  return (
-                                    <div className="px-3 pb-2">
-                                      {msgControl === index && (
-                                        <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
-                                          <ActionBar msg={msg} index={index} url={url} name={name} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                }
-                              })()}
+            return (
+              <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}>
+                <Icon size={18} />
+              </div>
+            );
+          })()}
 
-                              {/* 🔥 NEW: Caption display (text attached with file) */}
-                              {msg.caption && (
-                                <div className="px-3 pb-3 text-gray-800 text-[13px] break-words leading-snug border-t border-slate-100 pt-2">
-                                  {msg.caption}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
+          <div className="flex-1 min-w-0">
+            <p className="truncate text-[13px] font-medium text-slate-800">
+              {msg.file.name}
+            </p>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+              {getReadableFileType(msg.file.type)}
+            </p>
+          </div>
+        </div>
+
+        {/* PREVIEW */}
+        {(() => {
+          const fileType = msg.file.type;
+          const url = msg.file.url.startsWith("blob:")
+            ? msg.file.url
+            : `${msg.file.url}`;
+          const name = msg.file.name;
+
+          if (fileType.startsWith("audio/")) {
+            return (
+              <div className="px-3 pb-2">
+                <audio
+                  controls
+                  src={url}
+                  className="block h-7 w-full opacity-80 hover:opacity-100 m-0 p-0"
+                />
+              </div>
+            );
+          } else if (fileType.startsWith("image/")) {
+            return (
+              <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
+                <img
+                  src={url}
+                  alt={name}
+                  className="aspect-video w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+                {msgControl === index && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+                    <ActionBar msg={msg} index={index} url={url} name={name} />
+                  </div>
+                )}
+              </div>
+            );
+          } else if (fileType.startsWith("video/")) {
+            return (
+              <div className="mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
+                <video
+                  controls
+                  src={url}
+                  className="block aspect-video w-full object-cover bg-black m-0"
+                />
+              </div>
+            );
+          } else {
+            return (
+              <div className="px-3 pb-2">
+                {msgControl === index && (
+                  <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
+                    <ActionBar msg={msg} index={index} url={url} name={name} />
+                  </div>
+                )}
+              </div>
+            );
+          }
+        })()}
+
+        {/* Caption */}
+        {msg.caption && (
+          <div className="px-3 pb-3 text-gray-800 text-[13px] break-words leading-snug border-t border-slate-100 pt-2">
+            {msg.caption}
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+)}
 
                       {msg.caption && !msg.isDeleted && (
                         <div className="text-gray-800 text-[13px] mt-1.5 px-1 break-words leading-snug">
@@ -2931,6 +2949,7 @@ useEffect(() => {
       <div
         className={`flex flex-col space-y-6 ${is2XL || isXL ? "pl-6 w-[35%]" : "mt-4"} items-start`}
       >
+        <div className="flex justify-between w-full">
         <div
           className={`text-black ${
             isXXS || isXS || isSM
@@ -2942,10 +2961,33 @@ useEffect(() => {
               : is2XL || isXL
               ? "text-[16px]"
               : ""
-          } pt-[2vh] font-medium -tracking-[0.02rem]`}
+          } pt-auto font-medium -tracking-[0.02rem]`}
         >
           Self Assign
         </div>
+<div
+  onClick={fetchAllEmployees}
+  className={`flex items-center cursor-pointer gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all ${
+    isRefreshingEmployees ? "opacity-50 cursor-not-allowed" : ""
+  }`}
+  title="Refresh employee list"
+>
+  <svg
+    className={`w-3.5 h-3.5 ${isRefreshingEmployees ? "animate-spin" : ""}`}
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+    />
+  </svg>
+  {isRefreshingEmployees ? "Refreshing..." : "Refresh"}
+</div>
+  </div>
         <div className="w-full">
           <EmployeeSearchBar value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
         </div>
