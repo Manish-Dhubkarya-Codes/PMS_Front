@@ -2692,12 +2692,22 @@ const sendEditedMessage = async () => {
           );
         }
         if (type.startsWith("video/")) {
-          return (
-            <div className="mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
-              <video src={url} className="block aspect-video w-full object-cover bg-black m-0" />
-            </div>
-          );
-        }
+  return (
+    <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
+      <video
+        controls
+        src={url}
+        className="block aspect-video w-full object-cover bg-black m-0"
+      />
+      {/* Download / Action bar – same as TeamLeaderProjectInfo */}
+      {msgControl === index && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+          <ActionBar msg={msg} index={index} url={url} name={name} />
+        </div>
+      )}
+    </div>
+  );
+}
         return (
           <div className="px-3 pb-2">
             {msgControl === index && (
