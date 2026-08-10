@@ -11,22 +11,29 @@ import {
 export interface ProjectChatFileMessage {
   type: "file";
   isLeft: boolean;
-  fromClient: boolean;
-  fromHead: boolean;
-  fromTeamLeader: boolean;
+  fromClient?: boolean;
+  fromHead?: boolean;
+  fromTeamLeader?: boolean;
+  fromTL?: boolean;
   timestamp: string;
   seen_by: string[];
   tempId: string;
   file: { name: string; url: string; type: string };
   caption?: string;
-  mention: null;
+  mention?: null;
   replyTo?: any;
+  senderId?: string;
+  senderName?: string;
+  senderPic?: string;
 }
 
 interface UseProjectChatFileUploadOptions {
   projectId: string | number | null | undefined;
   role: ChatUploaderRole;
   uploaderId?: string | number | null;
+  /** Display name of the uploader (for TL/Employee monitor chat) */
+  uploaderName?: string | null;
+  uploaderPic?: string | null;
   socket: Socket | null;
   connected: boolean;
   getSocketExtra?: () => Record<string, unknown>;
@@ -44,6 +51,8 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
     projectId,
     role,
     uploaderId,
+    uploaderName,
+    uploaderPic,
     socket,
     connected,
     getSocketExtra,
@@ -59,6 +68,8 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
   const onLocalMessageRef = useRef(onLocalMessage);
   const getSocketExtraRef = useRef(getSocketExtra);
   const uploaderIdRef = useRef(uploaderId);
+  const uploaderNameRef = useRef(uploaderName);
+  const uploaderPicRef = useRef(uploaderPic);
   const completedTaskIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -76,16 +87,30 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
   useEffect(() => {
     uploaderIdRef.current = uploaderId;
   }, [uploaderId]);
+  useEffect(() => {
+    uploaderNameRef.current = uploaderName;
+  }, [uploaderName]);
+  useEffect(() => {
+    uploaderPicRef.current = uploaderPic;
+  }, [uploaderPic]);
 
-  const flags = useMemo(
-    () => ({
+  const flags = useMemo(() => {
+    const isMonitorSide = role === "tl_monitor" || role === "employee";
+    return {
       isLeft: false,
       fromClient: role === "client",
       fromHead: role === "head",
       fromTeamLeader: role === "tl",
-    }),
-    [role],
-  );
+      fromTL: role === "tl" || role === "tl_monitor",
+      ...(isMonitorSide
+        ? {
+            senderId: uploaderId != null ? String(uploaderId) : undefined,
+            senderName: uploaderName || undefined,
+            senderPic: uploaderPic || undefined,
+          }
+        : {}),
+    };
+  }, [role, uploaderId, uploaderName, uploaderPic]);
 
   const uploadManager = useChunkedUpload({
     projectId: resolvedProjectId,
@@ -130,6 +155,10 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
       const replyMeta = task.meta?.replyTo ?? null;
       const uid = uploaderIdRef.current;
 
+      const uidStr = uid != null ? String(uid) : undefined;
+      const nameStr = uploaderNameRef.current || undefined;
+      const picStr = uploaderPicRef.current || undefined;
+
       const localMsg: ProjectChatFileMessage = {
         type: "file",
         ...flags,
@@ -140,6 +169,9 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
         caption: captionMeta,
         mention: null,
         replyTo: replyMeta,
+        senderId: uidStr,
+        senderName: nameStr,
+        senderPic: picStr,
       };
 
       onLocalMessageRef.current?.(localMsg);
@@ -157,6 +189,10 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
           ...(getSocketExtraRef.current?.() || {}),
           headId: role === "head" ? uid || undefined : undefined,
           teamleaderid: role === "tl" ? uid || undefined : undefined,
+          // TL ↔ Employee monitor chat
+          senderId: uidStr,
+          senderName: nameStr,
+          senderPic: picStr,
         },
       });
     },
@@ -194,10 +230,14 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
       }
       if (!files.length) return [];
 
+      // Map monitor roles to a generic uploaderRole for chunk init metadata
+      const initRole =
+        role === "tl_monitor" ? "tl" : role === "employee" ? "employee" : role;
+
       return addFilesRef.current(files, {
         caption: meta?.caption || "",
         replyTo: meta?.replyTo || null,
-        uploaderRole: role,
+        uploaderRole: initRole,
         uploaderId: uploaderId || undefined,
         projectId: resolvedProjectId,
       });

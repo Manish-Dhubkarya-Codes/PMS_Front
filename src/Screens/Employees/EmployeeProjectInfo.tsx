@@ -18,6 +18,14 @@ import { useSocket } from "../../BackendConnections/useSocket";
 import { TbListDetails } from "react-icons/tb";
 import { MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply, MdBlock } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
+import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
+import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
+import {
+  appendLocalMonitorFileMessage,
+  formatMonitorSenderLabel,
+  mergeMonitorChatMessage,
+} from "../../FileSendUI/monitorChatMerge";
+import { normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -30,10 +38,12 @@ interface ChatMessage {
   seen_by: string[];
   id?: number;
   tempId?: string;
+  messageId?: string;
   replyTo?: ReplyMessage | null; // NEW
   senderName?: string;
   senderPic?: string;   // ← NEW
   senderId?: string;
+  caption?: string;
   edited?: boolean;
   editedAt?: string;
   isDeleted?: boolean;
@@ -122,6 +132,40 @@ const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?
 const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
 const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
 const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
+
+  const {
+    uploadTasks,
+    addChatFiles,
+    pause: pauseUpload,
+    resume: resumeUpload,
+    cancel: cancelUpload,
+    retry: retryUpload,
+  } = useProjectChatFileUpload({
+    projectId: projectDetails?.project_id || item?.project_id || "",
+    role: "employee",
+    uploaderId: employeeData?.employeeId,
+    uploaderName: employeeData?.employeeName,
+    uploaderPic: employeeData?.employeePic,
+    socket,
+    connected,
+    getSocketExtra: () => ({
+      senderId: employeeData?.employeeId,
+      senderName: employeeData?.employeeName,
+      senderPic: employeeData?.employeePic,
+    }),
+    onLocalMessage: (msg) => {
+      setChatMessages((prev) =>
+        appendLocalMonitorFileMessage(prev, {
+          ...msg,
+          fromTL: false,
+          isLeft: false,
+          senderId: String(employeeData?.employeeId || ""),
+          senderName: employeeData?.employeeName || "You",
+          senderPic: employeeData?.employeePic || "",
+        } as any),
+      );
+    },
+  });
 
 const isWithinEditWindow = (msg: ChatMessage): boolean => {
   if (!msg.timestamp) return false;
@@ -326,53 +370,31 @@ useEffect(() => {
       setTlMonitorChats(data);
     };
 
-    const handleNewMessage = (data: { fromRole: string; msg: any }) => {
-      const { fromRole, msg: incoming } = data;
-      setChatMessages((prev) => {
-        const isDuplicate = prev.some((m) =>
-          m.timestamp === incoming.timestamp &&
-          ((m.type === "text" && m.message === incoming.data) ||
-           (m.type === "file" && m.file?.name === incoming.data.name))
-        );
-        if (isDuplicate) return prev;
-        const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
-        if (existingIndex !== -1) {
-          const updated = [...prev];
-          updated[existingIndex] = {
-            ...updated[existingIndex],
-            id: incoming.id,
-            tempId: undefined,
-          };
-          return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        } else {
-          const fromTL = fromRole === "tl";
-          const isLeft = incoming.senderId !== employeeData.employeeId;
-          const newMsg: ChatMessage = {
-            type: incoming.type === "text" ? "text" : "file",
-            isLeft,
-            fromTL,
-            timestamp: incoming.timestamp,
-            seen_by: incoming.seen_by,
-            id: incoming.id,
-            replyTo: incoming.replyTo || null,
-            senderId: incoming.senderId,
-            senderName: incoming.senderName,
-            senderPic: incoming.senderPic || "",
-          };
-          if (incoming.type === "text") {
-            newMsg.message = incoming.data;
-          } else {
-            newMsg.file = {
-              name: incoming.data.name,
-              url: `${serverURL}${incoming.data.url}`,
-              type: incoming.data.type,
-            };
-          }
-          const updated = [...prev, newMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          return updated;
-        }
-      });
-      playNotification();
+    const applyMonitorMsg = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+      if (
+        data.projectId &&
+        item?.project_id &&
+        String(data.projectId) !== String(item.project_id)
+      ) {
+        return;
+      }
+      setChatMessages((prev) =>
+        mergeMonitorChatMessage(prev, data, {
+          myId: String(employeeData?.employeeId || ""),
+          isTLViewer: false,
+        }),
+      );
+    };
+
+    const handleNewMessage = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+      applyMonitorMsg(data);
+      const fromRole = data?.fromRole;
+      // Don't ping for own messages
+      if (fromRole && fromRole !== "employee") playNotification();
+    };
+
+    const handleMessageAck = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+      applyMonitorMsg(data);
     };
 
     const handleMessageSeen = (data: { fromTL: boolean; timestamp: string; seen_by: string[] }) => {
@@ -455,23 +477,25 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
 
 socket.on("tlMonitorChats", handleChats);
 socket.on("newTLMonitorMessage", handleNewMessage);
+socket.on("messageAck", handleMessageAck);
 socket.on("tlMonitorMessageSeen", handleMessageSeen);
 socket.on("tlMonitorMessageEdited", handleEdited);
 socket.on("tlMonitorMessageDeleted", handleDeleted);
 socket.on("employeeRemovedFromProject", handleEmployeeRemoved);
-socket.on("projectStatusUpdated", handleProjectStatusUpdated);   // ← ADD THIS
+socket.on("projectStatusUpdated", handleProjectStatusUpdated);
 
     return () => {
   socket.off("tlMonitorChats", handleChats);
   socket.off("newTLMonitorMessage", handleNewMessage);
+  socket.off("messageAck", handleMessageAck);
   socket.off("tlMonitorMessageSeen", handleMessageSeen);
   socket.off("tlMonitorMessageEdited", handleEdited);
   socket.off("tlMonitorMessageDeleted", handleDeleted);
   socket.off("employeeRemovedFromProject", handleEmployeeRemoved);
-  socket.off("projectStatusUpdated", handleProjectStatusUpdated);   // ← ADD THIS
+  socket.off("projectStatusUpdated", handleProjectStatusUpdated);
 };
   }
-}, [socket, connected, showChat, item, playNotification]);
+}, [socket, connected, showChat, item, playNotification, employeeData?.employeeId]);
 
 useEffect(() => {
   if (!tlMonitorChats) return;
@@ -680,7 +704,15 @@ useEffect(() => {
       autoScrollRef.current = true;
       prevMessagesLengthRef.current = combinedMessages.length;
     }
-  }, [combinedMessages, sending]); // Use combined
+  }, [combinedMessages, sending, uploadTasks]); // include uploadTasks so progress bubble stays in view
+  useEffect(() => {
+    // When a new upload starts, pin chat to bottom so the bubble is visible inside the box
+    if (Object.keys(uploadTasks).length > 0 && chatContainerRef.current) {
+      autoScrollRef.current = true;
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      setShowScrollToBottom(false);
+    }
+  }, [uploadTasks]);
   useEffect(() => {
   const chatContainer = chatContainerRef.current;
   const handleScroll = () => {
@@ -851,7 +883,8 @@ useEffect(() => {
   const handleSendMessage = async (
     message: string,
     type: "text" | "voice" | "file" = "text",
-    files?: { name: string; url: string; type: string; blob?: Blob }[]
+    files?: { name: string; url: string; type: string; blob?: Blob }[],
+    caption?: string,
   ) => {
     if (!socket || !connected || !projectDetails?.project_id) return;
     setSending(true);
@@ -925,42 +958,22 @@ useEffect(() => {
           }
         }
       } else if (type === "file" && files && files.length > 0) {
-        for (const file of files) {
-          if (file.blob) {
-            const formData = new FormData();
-            formData.append("file", file.blob, file.name);
-            formData.append("projectId", projId);
-            const uploadResponse = await postData(`clientproject/upload_file`, formData);
-            if (uploadResponse.status) {
-              const url = uploadResponse.data?.fileUrl || "";
-              if (url) {
-                const optimisticMsg: ChatMessage = {
-                  file: { name: file.name, url: `${serverURL}${url}`, type: file.type },
-                  isLeft: false,
-                  fromTL: false,
-                  type: "file",
-                  timestamp,
-                  seen_by: [],
-                  tempId,
-                  replyTo: replyToMessage || null,
-                  // ✅ ADD THESE 3 LINES
-  senderId: employeeData.employeeId,
-  senderName: employeeData.employeeName,
-  senderPic: employeeData.employeePic,
-                };
-                setChatMessages((prev) => [...prev, optimisticMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-                socket.emit("sendEmployeeMessage", {
-                  projectId: projId,
-                  type: "file",
-                  msgData: { name: file.name, url, type: file.type },
-                  timestamp,
-                  senderId,
-                  tempId,
-                  replyTo: replyToMessage || null,
-                });
-              }
-            }
-          }
+        const fileObjects = files
+          .filter((f): f is { name: string; url: string; type: string; blob: Blob } => !!f.blob)
+          .map((f) =>
+            f.blob instanceof File
+              ? f.blob
+              : new File([f.blob], f.name, {
+                  type: normalizeMimeType(f.type || f.blob.type, f.name),
+                }),
+          );
+        if (fileObjects.length > 0) {
+          addChatFiles(fileObjects, {
+            caption: caption || message.trim() || undefined,
+            replyTo: replyToMessage || null,
+          });
+          setReplyToMessage(null);
+          setNewMessage("");
         }
       }
     } catch (error) {
@@ -1031,31 +1044,14 @@ useEffect(() => {
     return <p className="text-gray-600 italic">Preview not available for this file type. Please download to view.</p>;
   };
 
-const getSenderInfo = (msg: ChatMessage) => {
-  const myId = String(employeeData?.employeeId || "");
-
-  if (msg.fromClient) {
-    return { name: projectDetails?.clientName || "Client", role: "CLIENT" };
-  }
-
-  // Self detection
-  if (msg.senderId && String(msg.senderId) === myId) {
-    return { name: "YOU", role: "EMPLOYEE" };
-  }
-
-  // 🔥 REAL NAME (Nihal, Varun, Vishwa etc.)
-  if (msg.senderName && msg.senderName.trim() !== "") {
-    return { 
-      name: msg.senderName, 
-      role: msg.fromTL ? "TEAM LEADER" : "EMPLOYEE" 
-    };
-  }
-
-  return { 
-    name: msg.fromTL ? "Team Leader" : "Employee", 
-    role: msg.fromTL ? "TEAM LEADER" : "EMPLOYEE" 
-  };
-};
+const getSenderInfo = (msg: ChatMessage) =>
+  formatMonitorSenderLabel({
+    msg,
+    myId: String(employeeData?.employeeId || ""),
+    myRoleLabel: "EMPLOYEE",
+    clientName: projectDetails?.clientName,
+    tlFallbackName: tlMonitorChats?.teamleadername || "Team Leader",
+  });
 
   const buttonValue = isRequesting
     ? "Requesting..."
@@ -1766,6 +1762,48 @@ const getSenderInfo = (msg: ChatMessage) => {
       </div>
     </div>
   )}
+  {/* WhatsApp-style upload progress — inside chat scroll, right-aligned like sent messages */}
+  {Object.values(uploadTasks).map((task) => (
+    <div
+      key={task.id}
+      className="flex justify-end my-2 w-full"
+    >
+      <div
+        className={`flex ${
+          isXXS || isXS || isSM
+            ? "w-[85%]"
+            : isLG || isXL
+            ? "w-[60%]"
+            : "w-[40%]"
+        } items-center flex-row-reverse`}
+      >
+        <div className="w-8 h-8 ml-2 shrink-0 rounded-full flex items-center justify-center">
+          <img
+            src={
+              employeeData?.employeePic
+                ? `${serverURL}/files/${employeeData.employeePic}`
+                : UserIcon
+            }
+            alt="You"
+            className="w-10 h-8 rounded-full border-2 border-blue-500/50"
+            onError={(e) => {
+              e.currentTarget.src = UserIcon;
+            }}
+          />
+        </div>
+        <div className="relative p-1 text-start w-fit ml-auto">
+          <FileUploadBubble
+            task={task}
+            align="right"
+            onPause={() => pauseUpload(task.id)}
+            onResume={() => resumeUpload(task.id)}
+            onCancel={() => cancelUpload(task.id)}
+            onRetry={() => retryUpload(task.id)}
+          />
+        </div>
+      </div>
+    </div>
+  ))}
   {showScrollToBottom && (
     <div
       onClick={scrollToBottom}
@@ -1780,11 +1818,11 @@ const getSenderInfo = (msg: ChatMessage) => {
                 <MikeSearch
   value={newMessage}
   onChange={(e) => setNewMessage(e.target.value)}
-  onSend={(message, type, files) => {
+  onSend={(message, type, files, caption) => {
     if (editingMessage) {
       sendEditedMessage();
     } else {
-      handleSendMessage(message, type, files);
+      handleSendMessage(message, type, files, caption);
     }
   }}
   disabled={!showChat || isChatDisabled}

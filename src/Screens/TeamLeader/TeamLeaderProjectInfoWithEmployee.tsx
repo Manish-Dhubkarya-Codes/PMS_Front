@@ -36,6 +36,15 @@ import { Commet } from "react-loading-indicators";
 import { MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply, MdBlock } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
+import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
+import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
+import {
+  appendLocalMonitorFileMessage,
+  formatMonitorSenderLabel,
+  mergeMonitorChatMessage,
+  absoluteMonitorFileUrl,
+} from "../../FileSendUI/monitorChatMerge";
+import { normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -48,6 +57,8 @@ interface ChatMessage {
   seen_by: string[];
   id?: any;
   tempId?: string; // For optimistic updates
+  messageId?: string;
+  caption?: string;
   replyTo?: ReplyMessage | null;
   senderName?: string;
   senderPic?: string;
@@ -139,6 +150,44 @@ const [progress, setProgress] = useState({ start: 'no', payment: '0%', work: '0%
 const designation = parsedData?.employeeDesignation || '';
 const deptMatch = designation.match(/\(([^)]+)\)$/);
 const dept = deptMatch ? deptMatch[1].trim() : null;
+
+  const myEmployeeId = parsedData?.employeeId || "";
+  const myEmployeeName = parsedData?.employeeName || "";
+  const myEmployeePic = parsedData?.employeePic || "";
+
+  const {
+    uploadTasks,
+    addChatFiles,
+    pause: pauseUpload,
+    resume: resumeUpload,
+    cancel: cancelUpload,
+    retry: retryUpload,
+  } = useProjectChatFileUpload({
+    projectId: projectDetails?.project_id || item?.project_id || "",
+    role: "tl_monitor",
+    uploaderId: myEmployeeId,
+    uploaderName: myEmployeeName,
+    uploaderPic: myEmployeePic,
+    socket,
+    connected,
+    getSocketExtra: () => ({
+      senderId: myEmployeeId,
+      senderName: myEmployeeName,
+      senderPic: myEmployeePic,
+    }),
+    onLocalMessage: (msg) => {
+      setChatMessages((prev) =>
+        appendLocalMonitorFileMessage(prev, {
+          ...msg,
+          fromTL: true,
+          isLeft: false,
+          senderId: String(myEmployeeId),
+          senderName: myEmployeeName || "You",
+          senderPic: myEmployeePic,
+        } as any),
+      );
+    },
+  });
 const toggleFileSelect = (timestamp: string) => {
   setSelectedFileTimestamps((prev) => {
     const next = new Set(prev);
@@ -553,61 +602,24 @@ useEffect(() => {
 useEffect(() => {
   if (!socket) return;
 
-  const handleNewMessage = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+  const applyMonitorMsg = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
     if (data.projectId && String(data.projectId) !== String(projectDetails?.project_id)) return;
+    setChatMessages((prev) =>
+      mergeMonitorChatMessage(prev, data, {
+        myId: String(myEmployeeId),
+        isTLViewer: true,
+      }),
+    );
+  };
 
-    const { fromRole, msg: incoming } = data;
+  const handleNewMessage = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+    applyMonitorMsg(data);
+    const fromRole = data?.fromRole;
+    if (fromRole && fromRole !== "tl") playNotification();
+  };
 
-    setChatMessages((prev) => {
-      const isDuplicate = prev.some(
-        (m) =>
-          m.timestamp === incoming.timestamp &&
-          ((m.type === "text" && m.message === incoming.data) ||
-            (m.type === "file" && m.file?.name === incoming.data?.name))
-      );
-      if (isDuplicate) return prev;
-
-      const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
-      if (existingIndex !== -1) {
-        const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          id: incoming.id,
-          tempId: undefined,
-        };
-        return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-
-      const fromTL = fromRole === "tl";
-      const isLeft = fromRole !== "tl"; // employee → left side for Team Leader
-
-      const newMsg: ChatMessage = {
-        type: incoming.type === "text" ? "text" : "file",
-        isLeft,
-        fromTL,
-        timestamp: incoming.timestamp,
-        seen_by: incoming.seen_by || [],
-        id: incoming.id,
-        replyTo: incoming.replyTo || null,
-        senderName: incoming.senderName,
-        senderPic: incoming.senderPic,
-        senderId: incoming.senderId,
-      };
-
-      if (incoming.type === "text") {
-        newMsg.message = incoming.data;
-      } else {
-        newMsg.file = {
-          name: incoming.data.name,
-          url: `${serverURL}${incoming.data.url}`,
-          type: incoming.data.type,
-        };
-      }
-
-      return [...prev, newMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    });
-
-    playNotification();
+  const handleMessageAck = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
+    applyMonitorMsg(data);
   };
 
 const handleEdited = (data: any) => {
@@ -665,17 +677,19 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
 };
 
   socket.on("newTLMonitorMessage", handleNewMessage);
+  socket.on("messageAck", handleMessageAck);
   socket.on("tlMonitorMessageEdited", handleEdited);
   socket.on("tlMonitorMessageDeleted", handleDeleted);
   socket.on("projectStatusUpdated", handleProjectStatusUpdated);
 
   return () => {
     socket.off("newTLMonitorMessage", handleNewMessage);
+    socket.off("messageAck", handleMessageAck);
     socket.off("tlMonitorMessageEdited", handleEdited);
     socket.off("tlMonitorMessageDeleted", handleDeleted);
     socket.off("projectStatusUpdated", handleProjectStatusUpdated);
   };
-}, [socket, projectDetails?.project_id, storedUserRole, playNotification]);
+}, [socket, projectDetails?.project_id, storedUserRole, playNotification, myEmployeeId]);
 
   useEffect(() => {
     observer.current = new IntersectionObserver(
@@ -868,7 +882,8 @@ const scrollToBottom = () => {
 const handleSendMessage = async (
   message: string,
   type: "text" | "voice" | "file" = "text",
-  files?: { name: string; url: string; type: string; blob?: Blob }[]
+  files?: { name: string; url: string; type: string; blob?: Blob }[],
+  caption?: string,
 ) => {
   if (
     (message.trim() || (files && files.length > 0)) &&
@@ -910,6 +925,7 @@ const handleSendMessage = async (
           timestamp,
           senderId,
           senderName: parsedData?.employeeName,
+          senderPic: parsedData?.employeePic,
           tempId,
           replyTo: replyToMessage || null,
         });
@@ -953,6 +969,8 @@ const handleSendMessage = async (
               msgData: { name: file.name, url, type: file.type || "audio/mp3" },
               timestamp,
               senderId,
+              senderName: parsedData?.employeeName,
+              senderPic: parsedData?.employeePic,
               tempId,
               replyTo: replyToMessage || null,
             });
@@ -960,48 +978,22 @@ const handleSendMessage = async (
         }
       } 
       else if (type === "file" && files && files.length > 0) {
-        for (const file of files) {
-          if (file.blob) {
-            const formData = new FormData();
-            formData.append("file", file.blob, file.name);
-            formData.append("projectId", projId);
-
-            const uploadResponse = await postData(`clientproject/upload_file`, formData);
-            if (uploadResponse.status) {
-              const url = uploadResponse.data?.fileUrl || "";
-              if (url) {
-                const optimisticMsg: ChatMessage = {
-                  file: {
-                    name: file.name,
-                    url: `${serverURL}${url}`,
-                    type: file.type,
-                  },
-                  isLeft: false,
-                  fromTL: true,
-                  type: "file",
-                  timestamp,
-                  seen_by: [],
-                  tempId,
-                  replyTo: replyToMessage || null,
-                  senderId: senderId.toString(),
-                  senderName: parsedData?.employeeName || "You",
-                  senderPic: parsedData?.employeePic || "",
-                };
-
-                setChatMessages((prev) => [...prev, optimisticMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-
-                socket.emit(emitEvent, {
-                  projectId: projId,
-                  type: "file",
-                  msgData: { name: file.name, url, type: file.type },
-                  timestamp,
-                  senderId,
-                  tempId,
-                  replyTo: replyToMessage || null,
-                });
-              }
-            }
-          }
+        const fileObjects = files
+          .filter((f): f is { name: string; url: string; type: string; blob: Blob } => !!f.blob)
+          .map((f) =>
+            f.blob instanceof File
+              ? f.blob
+              : new File([f.blob], f.name, {
+                  type: normalizeMimeType(f.type || f.blob.type, f.name),
+                }),
+          );
+        if (fileObjects.length > 0) {
+          addChatFiles(fileObjects, {
+            caption: caption || message.trim() || undefined,
+            replyTo: replyToMessage || null,
+          });
+          setReplyToMessage(null);
+          setNewMessage("");
         }
       }
     } catch (error) {
@@ -1273,31 +1265,15 @@ const handleSendMessage = async (
       </div>
     );
 
-const getSenderInfo = (msg: ChatMessage) => {
-  const myId = String(parsedData?.employeeId || "");
-
-  if (msg.fromClient) {
-    return { name: projectDetails?.clientName || "Client", role: "CLIENT" };
-  }
-
-  // Self detection
-  if (msg.senderId && String(msg.senderId) === myId) {
-    return { name: "YOU", role: "TEAM LEADER" };
-  }
-
-  // 🔥 REAL NAME (Nihal, Varun, Vishwa etc.)
-  if (msg.senderName && msg.senderName.trim() !== "") {
-    return { 
-      name: msg.senderName, 
-      role: msg.fromTL ? "TEAM LEADER" : "EMPLOYEE" 
-    };
-  }
-
-  return { 
-    name: msg.fromTL ? "Team Leader" : "Employee", 
-    role: msg.fromTL ? "TEAM LEADER" : "EMPLOYEE" 
-  };
-};
+const getSenderInfo = (msg: ChatMessage) =>
+  formatMonitorSenderLabel({
+    msg,
+    myId: String(parsedData?.employeeId || ""),
+    myRoleLabel: "TEAM LEADER",
+    clientName: projectDetails?.clientName,
+    tlFallbackName:
+      tlMonitorChats?.teamleadername || parsedData?.employeeName || "Team Leader",
+  });
 
   const isXXS = width <= 480;
   const isXS = width > 480 && width <= 640;
@@ -2027,6 +2003,19 @@ const getSenderInfo = (msg: ChatMessage) => {
     </div>
   </div>
 )}
+      {/* WhatsApp-style chunked upload bubbles */}
+      {Object.values(uploadTasks).map((task) => (
+        <div key={task.id} className="flex justify-end my-2 w-full px-1">
+          <FileUploadBubble
+            task={task}
+            align="right"
+            onPause={() => pauseUpload(task.id)}
+            onResume={() => resumeUpload(task.id)}
+            onCancel={() => cancelUpload(task.id)}
+            onRetry={() => retryUpload(task.id)}
+          />
+        </div>
+      ))}
   </div>
   
 </div>
@@ -2036,11 +2025,11 @@ const getSenderInfo = (msg: ChatMessage) => {
   value={newMessage}
   onChange={(e) => setNewMessage(e.target.value)}
   onKeyDown={handleKeyDown}
-  onSend={(message, type, files) => {
+  onSend={(message, type, files, caption) => {
     if (editingMessage) {
       sendEditedMessage();
     } else {
-      handleSendMessage(message, type, files);
+      handleSendMessage(message, type, files, caption);
     }
   }}
   placeholder={editingMessage ? "Edit your message..." : "Type your message..."}

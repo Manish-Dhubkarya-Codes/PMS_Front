@@ -65,11 +65,18 @@ export function buildChatFilePayload(input: {
   };
 }
 
-export type ChatUploaderRole = "head" | "client" | "tl";
+export type ChatUploaderRole =
+  | "head"
+  | "client"
+  | "tl"
+  | "tl_monitor"
+  | "employee";
 
 export function socketEventForRole(role: ChatUploaderRole): string {
   if (role === "head") return "sendHeadMessage";
   if (role === "tl") return "sendTLMessage";
+  if (role === "tl_monitor") return "sendTLToMonitorMessage";
+  if (role === "employee") return "sendEmployeeMessage";
   return "sendClientMessage";
 }
 
