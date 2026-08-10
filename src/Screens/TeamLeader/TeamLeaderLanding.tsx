@@ -1559,7 +1559,11 @@ const filteredItems =
                  bg-blue-600 text-xs font-medium text-white
                  transition-colors hover:bg-blue-500"
       style={{ clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 10px 50%)' }}
-      onClick={() => navigate(`/teamleaderprojectinfo`, { state: { item } })}
+      onClick={() =>
+        navigate(`/teamleaderprojectinfo`, {
+          state: { item: projectItem },
+        })
+      }
     >
       Talk to Client/Head
     </div>

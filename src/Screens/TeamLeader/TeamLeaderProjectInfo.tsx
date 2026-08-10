@@ -23,7 +23,7 @@ import {
 } from "react-icons/fa";
 import { FaFilePdf } from "react-icons/fa6";
 
-import { useLocation } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { FiDownload, FiX, FiZoomIn } from "react-icons/fi";
 import { RiTimeLine } from "react-icons/ri";
 import { TbListDetails } from "react-icons/tb";
@@ -41,6 +41,24 @@ import { useSocket } from "../../BackendConnections/useSocket";
 import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete, MdBlock } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
+import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
+import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
+import {
+  buildChatFilePayload,
+  normalizeMimeType,
+} from "../../FileSendUI/chatFileUtils";
+import {
+  appendLocalFileMessage,
+  mergeIncomingChatMessage,
+} from "../../FileSendUI/chatMessageMerge";
+import {
+  dedupeLoadedMessages,
+  isLeftForViewer,
+  resolveRoleFromParsed,
+  roleFlags,
+  type ChatRole,
+} from "../../FileSendUI/chatIdentity";
+import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
 interface ChatMessage {
   type: "text" | "file";
   isLeft: boolean;
@@ -54,6 +72,7 @@ interface ChatMessage {
   id?: number;
   mention?: { type: "client" | "head"; id: string; name: string; imageUrl?: string } | null;
   tempId?: string; // For optimistic updates
+  messageId?: string;
   replyTo?: ReplyMessage | null;
   edited?: boolean;
   editedAt?: string;
@@ -144,27 +163,39 @@ const TeamLeaderProjectInfo: React.FC = () => {
   const [playNotification] = useSound(notificationSound);
   const [selectedMention, setSelectedMention] = useState<ChatMessage["mention"] | null>(null);
   const location = useLocation();
-  const { item } = location.state || {};
+  const [searchParams] = useSearchParams();
+  const { item: stateItem } = (location.state as { item?: any }) || {};
+  // Support both landing navigation state and ?projectId= URL open
+  const item =
+    stateItem ||
+    (searchParams.get("projectId")
+      ? { project_id: searchParams.get("projectId") }
+      : null);
   const storedUserData = localStorage.getItem("userData");
-const isCompleted = projectDetails?.status === "Completed";
-const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
-const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
+  const isCompleted = projectDetails?.status === "Completed";
+  const isChatDisabled =
+    projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
+  const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
 
-const isWithinEditWindow = (msg: ChatMessage): boolean => {
-  if (!msg.timestamp) return false;
-  const sent = new Date(msg.timestamp).getTime();
-  return Date.now() - sent < 2 * 60 * 1000; // 2 minutes
-};
-const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
-if (!parsedData) {
-  // Optional: redirect to login if you want
-  // navigate("/login");
-  return null; // or show nothing
-}
-const designation = parsedData?.employeeDesignation || "";
-const deptMatch = designation.match(/\(([^)]+)\)$/);
-const dept = deptMatch ? deptMatch[1].trim() : null;
-  // const storedUserRole = localStorage.getItem("role") ? atob(localStorage.getItem("role")!) : "";
+  const isWithinEditWindow = (msg: ChatMessage): boolean => {
+    if (!msg.timestamp) return false;
+    const sent = new Date(msg.timestamp).getTime();
+    return Date.now() - sent < 2 * 60 * 1000; // 2 minutes
+  };
+
+  // IMPORTANT: never return before hooks — landing navigation was crashing
+  // with "Rendered more hooks than during the previous render".
+  let parsedData: any = null;
+  try {
+    parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
+  } catch {
+    parsedData = null;
+  }
+  const designation = parsedData?.employeeDesignation || "";
+  const deptMatch = designation.match(/\(([^)]+)\)$/);
+  const dept = deptMatch ? deptMatch[1].trim() : null;
+  const teamLeaderUserId = parsedData?.employeeId || "";
+
   const [width, setWidth] = useState(window.innerWidth);
   const [searchQuery, setSearchQuery] = useState("");
   const [employeeStatuses, setEmployeeStatuses] = useState<{ [key: string]: string }>({});
@@ -181,13 +212,41 @@ const dept = deptMatch ? deptMatch[1].trim() : null;
   const observer = useRef<IntersectionObserver | null>(null);
   const { socket, connected, onEvent } = useSocket();
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-const [headId, setHeadId] = useState<string>("");
-const [headName, setHeadName] = useState<string>("");
-const [headPic, setHeadPic] = useState<string>("");
-const [replyToMessage, setReplyToMessage] = useState<ReplyMessage | null>(null);
-const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
-const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
-const [isUpdatesLoading, setIsUpdatesLoading] = useState(true);
+  const [headId, setHeadId] = useState<string>("");
+  const [headName, setHeadName] = useState<string>("");
+  const [headPic, setHeadPic] = useState<string>("");
+  const [replyToMessage, setReplyToMessage] = useState<ReplyMessage | null>(null);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
+
+  const getFileDisplayUrl = (url: string | undefined) =>
+    toAbsoluteFileUrl(url, serverURL);
+
+  const activeProjectId =
+    projectDetails?.project_id || item?.project_id || searchParams.get("projectId") || "";
+
+  const {
+    uploadTasks,
+    addChatFiles,
+    pause: pauseUpload,
+    resume: resumeUpload,
+    cancel: cancelUpload,
+    retry: retryUpload,
+  } = useProjectChatFileUpload({
+    projectId: activeProjectId,
+    role: "tl",
+    uploaderId: teamLeaderUserId,
+    socket,
+    connected,
+    getSocketExtra: () => ({ teamleaderid: teamLeaderUserId }),
+    onLocalMessage: (msg) => {
+      setChatMessages((prev) =>
+        appendLocalFileMessage(prev, msg as ChatMessage),
+      );
+    },
+  });
+
+  const [isUpdatesLoading, setIsUpdatesLoading] = useState(true);
 const [isFileSelectionMode, setIsFileSelectionMode] = useState(false);
 const [selectedFileTimestamps, setSelectedFileTimestamps] = useState<Set<string>>(new Set());
 const [progress, setProgress] = useState({ start: 'no', payment: '0%', work: '0%' });
@@ -660,10 +719,12 @@ useEffect(() => {
 }, [socket, projectDetails?.project_id]);
 
   const fetchProject = async (isPolling = false) => {
+    const pid = item?.project_id || activeProjectId;
+    if (!pid) return;
     if (!isPolling) setLoading(true);
     try {
-      const response = await getData(`clientproject/get_project/${item.project_id}`);
-      if (response.status) {
+      const response = await getData(`clientproject/get_project/${pid}`);
+      if (response?.status) {
         setProjectDetails(response.data);
       }
     } catch (error) {
@@ -673,12 +734,11 @@ useEffect(() => {
     }
   };
   useEffect(() => {
-    if (item?.project_id) {
+    if (item?.project_id || activeProjectId) {
       fetchProject();
-    } else {
-      setProjectDetails(item);
     }
-  }, [item]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.project_id, activeProjectId]);
 
   
 
@@ -696,117 +756,42 @@ useEffect(() => {
 }, [fetchProject]);
 
   useEffect(() => {
-    if (socket) {
-      onEvent("newMessage", (data: { fromRole: string; msg: any }) => {
-        const { fromRole, msg: incoming } = data;
-        setChatMessages((prev) => {
-          const isDuplicate = prev.some((m) =>
-            m.timestamp === incoming.timestamp &&
-            ((m.type === "text" && m.message === incoming.data) ||
-             (m.type === "file" && m.file?.name === incoming.data.name))
-          );
-          if (isDuplicate) {
-            return prev;
-          }
-          const existingIndex = prev.findIndex(
-            (m) => m.tempId === incoming.tempId
-          );
-          if (existingIndex !== -1) {
-            const updated = [...prev];
-            updated[existingIndex] = {
-              ...updated[existingIndex],
-              id: incoming.id,
-              tempId: undefined,
-            };
-            return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          } else {
-            const fromClient = fromRole === "client";
-            const fromHead = fromRole === "head";
-            const fromTeamLeader = fromRole === "tl";
-            const isLeft = fromClient || fromHead; // For TL view: client and head are left
-            const newMsg: ChatMessage = {
-              type: incoming.type === "text" ? "text" : "file",
-              isLeft,
-              fromClient,
-              fromHead,
-              fromTeamLeader,
-              timestamp: incoming.timestamp,
-              seen_by: incoming.seen_by,
-              id: incoming.id,
-              mention: incoming.mention,
-              replyTo: incoming.replyTo || null,
-            };
-            if (incoming.type === "text") {
-              newMsg.message = incoming.data;
-            } else {
-              newMsg.file = {
-                name: incoming.data.name,
-                url: `${serverURL}${incoming.data.url}`,
-                type: incoming.data.type,
-              };
-              newMsg.caption = incoming.caption || undefined;
-            }
-            const updated = [...prev, newMsg].sort((a, b) =>
-              a.timestamp.localeCompare(b.timestamp)
-            );
-            return updated;
-          }
-        });
-          playNotification();
-      });
-    }
-  }, [socket, playNotification]);
+    if (!socket) return;
 
-useEffect(() => {
-  if (socket && connected && projectDetails?.project_id) {
-    socket.emit("joinProject", projectDetails.project_id);
-
-    const handleNewMessage = (data: { projectId: string; fromRole: string; msg: ChatMessage }) => {
-      if (data.projectId !== projectDetails?.project_id) return;
-
-      const { fromRole, msg } = data;
-      let newMsg: ChatMessage = {
-        type: msg.type,
-        timestamp: msg.timestamp,
-        seen_by: msg.seen_by || [],
-        id: msg.id,
-        mention: msg.mention || null,
-        replyTo: msg.replyTo || null, // Ensure replyTo is handled
-        tempId: msg.tempId,
-        isLeft: fromRole !== "tl", // TL's own messages on right
-        fromClient: fromRole === "client",
-        fromHead: fromRole === "head",
-        fromTeamLeader: fromRole === "tl",
-        message: msg.type === "text" ? msg.message : undefined,
-        file: msg.type === "file" ? msg.file : undefined,
-        caption: msg.caption || undefined,
-      };
-
-      setChatMessages((prev) => {
-        if (fromRole === "tl" && msg.tempId) {
-          // Update optimistic message with real ID for TL's own reply
-          return prev.map((m) =>
-            m.tempId === msg.tempId ? { ...m, id: msg.id, replyTo: msg.replyTo, caption: msg.caption || undefined } : m
-          );
-        } else {
-          // Add new message from client/head
-          playNotification(); // Play sound for incoming
-          return [...prev, newMsg];
-        }
-      });
-
-      // Update updates list if needed
-      processUpdates([...chatMessages, newMsg]);
+    const apply = (data: { fromRole: string; msg: any; projectId?: string }) => {
+      if (!data?.msg) return;
+      if (
+        activeProjectId &&
+        data.projectId &&
+        String(data.projectId) !== String(activeProjectId)
+      ) {
+        return;
+      }
+      setChatMessages((prev) =>
+        mergeIncomingChatMessage(prev, data, { ownRole: "tl" }),
+      );
     };
 
-    socket.on("newMessage", handleNewMessage);
+    const offNew = onEvent("newMessage", (data: any) => {
+      apply(data);
+      const fromRole = data?.fromRole || data?.msg?.fromRole;
+      if (fromRole && fromRole !== "tl") playNotification();
+    });
+    const offAck = onEvent("messageAck", apply);
 
-    // Cleanup
     return () => {
-      socket.off("newMessage", handleNewMessage);
+      offNew?.();
+      offAck?.();
     };
-  }
-}, [socket, connected, projectDetails, chatMessages, playNotification]);
+  }, [socket, playNotification, onEvent, activeProjectId]);
+
+// Join project room as soon as we know the id (landing state or fetched details).
+// Do NOT register a second newMessage listener here — one clean listener exists above.
+useEffect(() => {
+  if (!socket || !connected || !activeProjectId) return;
+  socket.emit("joinProject", activeProjectId);
+  socket.emit("joinTlRoom");
+}, [socket, connected, activeProjectId]);
 
 
    useEffect(() => {
@@ -1133,7 +1118,11 @@ const handleRemoveMonitor = async (employeeId: string, projectId: string) => {
   };
 const markMessageAsSeen = async (msg: ChatMessage) => {
   if (!projectDetails?.project_id || msg.id === undefined) return;
-  let messageType = msg.type === "file" && msg.file?.type.startsWith("audio/") ? "audio" : "chat";
+  let messageType =
+    msg.type === "file" &&
+    normalizeMimeType(msg.file?.type, msg.file?.name).startsWith("audio/")
+      ? "audio"
+      : "chat";
   const viewer = "tl";
   try {
     const response = await postData(`clientproject/mark_message_seen/${projectDetails.project_id}`, {
@@ -1516,63 +1505,38 @@ setReplyToMessage(null);
         }
       } 
       else if (type === "file" && files && files.length > 0) {
-        for (const file of files) {
-          if (file.blob) {
-            const formData = new FormData();
-            formData.append("file", file.blob, file.name);
-            formData.append("projectId", projId);
+        const fileObjects = files
+          .filter(
+            (
+              file,
+            ): file is {
+              name: string;
+              url: string;
+              type: string;
+              blob: Blob;
+            } => !!file.blob,
+          )
+          .map((file) =>
+            file.blob instanceof File
+              ? file.blob
+              : new File([file.blob], file.name, {
+                  type:
+                    file.type || file.blob.type || "application/octet-stream",
+                }),
+          );
 
-            const uploadResponse = await postData(
-              `clientproject/upload_file`,
-              formData
-            );
-
-            if (uploadResponse.status) {
-              const url = uploadResponse.data?.fileUrl || "";
-              if (url) {
-                const tempId = uuidv4();
-
-                const optimisticMsg: ChatMessage = {
-                  file: {
-                    name: file.name,
-                    url: `${serverURL}${url}`,
-                    type: file.type,
-                  },
-                  caption: caption || message.trim() || undefined,   // ← Caption support
-                  isLeft: false,
-                  fromClient: false,
-                  fromHead: false,
-                  fromTeamLeader: true,
-                  type: "file",
-                  timestamp,
-                  seen_by: [],
-                  tempId,
-                  mention: null,
-                  replyTo: currentReplyTo,
-                };
-
-                setChatMessages((prev) =>
-                  [...prev, optimisticMsg].sort((a, b) =>
-                    a.timestamp.localeCompare(b.timestamp)
-                  )
-                );
-
-                socket.emit("sendTLMessage", {
-                  projectId: projId,
-                  type: "file",
-                  msgData: { name: file.name, url, type: file.type },
-                  caption: caption || message.trim() || null,   // ← Send caption
-                  timestamp,
-                  teamleaderid,
-                  mention: null,
-                  tempId,
-                  replyTo: currentReplyTo,
-                });
-              }
-            }
+        if (fileObjects.length > 0) {
+          if (!activeProjectId) {
+            alert("Project is still loading. Please wait a moment and try again.");
+            return;
           }
+          addChatFiles(fileObjects, {
+            caption: caption || message.trim(),
+            replyTo: currentReplyTo,
+          });
+          setNewMessage("");
+          setReplyToMessage(null);
         }
-        setReplyToMessage(null);
       }
     } catch (error) {
       console.error("Error sending message:", error);
@@ -1719,39 +1683,27 @@ setReplyToMessage(null);
 useEffect(() => {
   if (!projectDetails) return;
 
-  let allMessages: ChatMessage[] = [];
-  const maxLengthClient = Math.max(
-    projectDetails.clientchats?.length || 0,
-    projectDetails.clientaudios?.length || 0
-  );
-  const maxLengthHead = Math.max(
-    projectDetails.headchats?.length || 0,
-    projectDetails.headaudios?.length || 0
-  );
-  const maxLengthTL = Math.max(
-    projectDetails.tlchats?.length || 0,
-    projectDetails.tlaudios?.length || 0
-  );
-  const maxLength = Math.max(maxLengthClient, maxLengthHead, maxLengthTL);
-
-  for (let i = 0; i < maxLength; i++) {
-    // ================== CLIENT CHATS ==================
-    if (i < (projectDetails.clientchats?.length || 0)) {
-      const chatStr = projectDetails.clientchats?.[i];
-      if (typeof chatStr === "string") {
+  const parseBucket = (
+    chats: string[] | undefined,
+    audios: string[] | undefined,
+    columnDefault: ChatRole,
+  ): ChatMessage[] => {
+    const out: ChatMessage[] = [];
+    const max = Math.max(chats?.length || 0, audios?.length || 0);
+    for (let i = 0; i < max; i++) {
+      if (i < (chats?.length || 0) && typeof chats![i] === "string") {
         try {
-          const parsed = JSON.parse(chatStr);
-          let timestamp = parsed.timestamp || new Date().toISOString();
-
+          const parsed = JSON.parse(chats![i]);
+          const role = resolveRoleFromParsed(parsed, columnDefault);
+          const flags = roleFlags(role);
           const msg: ChatMessage = {
             type: parsed.type === "text" ? "text" : "file",
-            isLeft: true,
-            fromClient: true,
-            fromHead: false,
-            fromTeamLeader: false,
-            timestamp,
+            isLeft: isLeftForViewer("tl", role),
+            ...flags,
+            timestamp: parsed.timestamp || new Date().toISOString(),
             seen_by: parsed.seen_by || [],
             id: i,
+            messageId: parsed.messageId,
             mention: parsed.mention || null,
             replyTo: parsed.replyTo || null,
             isDeleted: parsed.isDeleted || false,
@@ -1760,221 +1712,53 @@ useEffect(() => {
             editedAt: parsed.editedAt,
             caption: parsed.caption || undefined,
           };
-
           if (!parsed.isDeleted) {
-            if (parsed.type === "text") {
-              msg.message = parsed.data;
-            } else if (parsed.data) {
-              msg.file = {
-                name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
-                type: parsed.data.type,
-              };
-            }
+            if (parsed.type === "text") msg.message = parsed.data;
+            else if (parsed.data) msg.file = buildChatFilePayload(parsed.data).file;
           }
-          allMessages.push(msg);
+          out.push(msg);
         } catch (e) {
-          console.error("Error parsing client chat:", e);
+          console.error("Error parsing chat:", e);
         }
       }
-    }
-
-    // ================== CLIENT AUDIOS ==================
-    if (projectDetails.clientaudios && i < projectDetails.clientaudios.length) {
-      const audioStr = projectDetails.clientaudios[i];
-      try {
-        const parsed = JSON.parse(audioStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
-
-        const msg: ChatMessage = {
-          type: "file",
-          isLeft: true,
-          fromClient: true,
-          fromHead: false,
-          fromTeamLeader: false,
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          mention: parsed.mention || null,
-          replyTo: parsed.replyTo || null,
-          isDeleted: parsed.isDeleted || false,
-          deletedAt: parsed.deletedAt,
-          caption: parsed.caption || undefined,
-        };
-
-        if (!parsed.isDeleted && parsed.data) {
-          msg.file = {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
+      if (i < (audios?.length || 0) && typeof audios![i] === "string") {
+        try {
+          const parsed = JSON.parse(audios![i]);
+          const role = resolveRoleFromParsed(parsed, columnDefault);
+          const flags = roleFlags(role);
+          const msg: ChatMessage = {
+            type: "file",
+            isLeft: isLeftForViewer("tl", role),
+            ...flags,
+            timestamp: parsed.timestamp || new Date().toISOString(),
+            seen_by: parsed.seen_by || [],
+            id: i,
+            messageId: parsed.messageId,
+            mention: parsed.mention || null,
+            replyTo: parsed.replyTo || null,
+            isDeleted: parsed.isDeleted || false,
+            deletedAt: parsed.deletedAt,
+            caption: parsed.caption || undefined,
           };
-        }
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing client audio:", e);
-      }
-    }
-
-    // ================== HEAD CHATS ==================
-    if (projectDetails.headchats && i < projectDetails.headchats.length) {
-      const chatStr = projectDetails.headchats[i];
-      try {
-        const parsed = JSON.parse(chatStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
-
-        const msg: ChatMessage = {
-          type: parsed.type === "text" ? "text" : "file",
-          isLeft: true,
-          fromClient: false,
-          fromHead: true,
-          fromTeamLeader: false,
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          mention: parsed.mention || null,
-          replyTo: parsed.replyTo || null,
-          isDeleted: parsed.isDeleted || false,
-          deletedAt: parsed.deletedAt,
-          edited: parsed.edited || false,
-          editedAt: parsed.editedAt,
-          caption: parsed.caption || undefined,
-        };
-
-        if (!parsed.isDeleted) {
-          if (parsed.type === "text") {
-            msg.message = parsed.data;
-          } else if (parsed.data) {
-            msg.file = {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            };
+          if (!parsed.isDeleted && parsed.data) {
+            msg.file = buildChatFilePayload(parsed.data).file;
           }
+          out.push(msg);
+        } catch (e) {
+          console.error("Error parsing audio:", e);
         }
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing head chat:", e);
       }
     }
+    return out;
+  };
 
-    // ================== HEAD AUDIOS ==================
-    if (projectDetails.headaudios && i < projectDetails.headaudios.length) {
-      const audioStr = projectDetails.headaudios[i];
-      try {
-        const parsed = JSON.parse(audioStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
-
-        const msg: ChatMessage = {
-          type: "file",
-          isLeft: true,
-          fromClient: false,
-          fromHead: true,
-          fromTeamLeader: false,
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          mention: parsed.mention || null,
-          replyTo: parsed.replyTo || null,
-          isDeleted: parsed.isDeleted || false,
-          deletedAt: parsed.deletedAt,
-          caption: parsed.caption || undefined,
-        };
-
-        if (!parsed.isDeleted && parsed.data) {
-          msg.file = {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
-          };
-        }
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing head audio:", e);
-      }
-    }
-
-    // ================== TL CHATS (already correct) ==================
-    if (projectDetails.tlchats && i < projectDetails.tlchats.length) {
-      const chatStr = projectDetails.tlchats[i];
-      try {
-        const parsed = JSON.parse(chatStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
-
-        const msg: ChatMessage = {
-          type: parsed.type === "text" ? "text" : "file",
-          isLeft: false,
-          fromClient: false,
-          fromHead: false,
-          fromTeamLeader: true,
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          mention: parsed.mention || null,
-          replyTo: parsed.replyTo || null,
-          isDeleted: parsed.isDeleted || false,
-          deletedAt: parsed.deletedAt,
-          edited: parsed.edited || false,
-          editedAt: parsed.editedAt,
-          caption: parsed.caption || undefined,
-        };
-
-        if (!parsed.isDeleted) {
-          if (parsed.type === "text") {
-            msg.message = parsed.data;
-          } else if (parsed.data) {
-            msg.file = {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            };
-          }
-        }
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing team leader chat:", e);
-      }
-    }
-
-    // ================== TL AUDIOS (already fixed earlier) ==================
-    if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
-      const audioStr = projectDetails.tlaudios[i];
-      try {
-        const parsed = JSON.parse(audioStr);
-        let timestamp = parsed.timestamp || new Date().toISOString();
-
-        const msg: ChatMessage = {
-          type: "file",
-          isLeft: false,
-          fromClient: false,
-          fromHead: false,
-          fromTeamLeader: true,
-          timestamp,
-          seen_by: parsed.seen_by || [],
-          id: i,
-          mention: parsed.mention || null,
-          replyTo: parsed.replyTo || null,
-          isDeleted: parsed.isDeleted || false,
-          deletedAt: parsed.deletedAt,
-          caption: parsed.caption || undefined,
-        };
-
-        if (!parsed.isDeleted && parsed.data) {
-          msg.file = {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
-          };
-        }
-        allMessages.push(msg);
-      } catch (e) {
-        console.error("Error parsing team leader audio:", e);
-      }
-    }
-  }
-
-  allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const allMessages = dedupeLoadedMessages([
+    ...parseBucket(projectDetails.clientchats, projectDetails.clientaudios, "client"),
+    ...parseBucket(projectDetails.headchats, projectDetails.headaudios, "head"),
+    ...parseBucket(projectDetails.tlchats, projectDetails.tlaudios, "tl"),
+  ]);
   setChatMessages(allMessages);
-}, [projectDetails, serverURL]);
+}, [projectDetails]);
 
   const ActionBar = ({ msg, url, name }: any) => (
     <div
@@ -2001,6 +1785,10 @@ useEffect(() => {
       </div>
     </div>
   );
+
+  if (!parsedData) {
+    return null;
+  }
 
   return (
 <div
@@ -2498,7 +2286,7 @@ useEffect(() => {
         {/* HEADER */}
         <div className="flex items-center gap-3 px-3 py-2">
           {(() => {
-            const fileType = msg.file.type;
+            const fileType = normalizeMimeType(msg.file?.type, msg.file?.name);
             let Icon = FaFileInvoice;
             let color = "text-slate-600";
 
@@ -2540,18 +2328,16 @@ useEffect(() => {
               {msg.file.name}
             </p>
             <p className="text-[10px] uppercase tracking-wide text-slate-400">
-              {getReadableFileType(msg.file.type)}
+              {getReadableFileType(normalizeMimeType(msg.file?.type, msg.file?.name))}
             </p>
           </div>
         </div>
 
         {/* PREVIEW */}
         {(() => {
-          const fileType = msg.file.type;
-          const url = msg.file.url.startsWith("blob:")
-            ? msg.file.url
-            : `${msg.file.url}`;
           const name = msg.file.name;
+          const fileType = normalizeMimeType(msg.file?.type, name);
+          const url = getFileDisplayUrl(msg.file.url);
 
           if (fileType.startsWith("audio/")) {
             return (
@@ -2826,6 +2612,19 @@ useEffect(() => {
     </div>
   </div>
 )}
+      {/* WhatsApp-style upload progress bubbles (inside chat scroll, right-aligned) */}
+      {Object.values(uploadTasks).map((task) => (
+        <div key={task.id} className="flex justify-end my-2 w-full px-1">
+          <FileUploadBubble
+            task={task}
+            align="right"
+            onPause={() => pauseUpload(task.id)}
+            onResume={() => resumeUpload(task.id)}
+            onCancel={() => cancelUpload(task.id)}
+            onRetry={() => retryUpload(task.id)}
+          />
+        </div>
+      ))}
     </div>
   </div>
 <div className="w-[90%]">

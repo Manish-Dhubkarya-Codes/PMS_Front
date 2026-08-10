@@ -37,9 +37,30 @@ import { v4 as uuidv4 } from "uuid";
 import { useSocket } from "../../BackendConnections/useSocket";
 import Button2 from "../../UI_Components/Buttons/Button2";
 import SOW from "../../UI_Components/Pop_Ups/SOW";
-import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete, MdBlock } from "react-icons/md";
+import {
+  MdOutlineDoubleArrow,
+  MdOutlineReply,
+  MdEdit,
+  MdDelete,
+  MdBlock,
+} from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
+import { useChunkedUpload } from "../../FileSendUI/useChunkedUpload";
+import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
+import type { UploadTask } from "../../FileSendUI/upload";
+import { toAbsoluteFileUrl, toRelativeFileUrl } from "../../FileSendUI/fileUrl";
+import {
+  appendLocalFileMessage,
+  mergeIncomingChatMessage,
+} from "../../FileSendUI/chatMessageMerge";
+import { emitChatFileMessage } from "../../FileSendUI/chatFileUtils";
+import {
+  dedupeLoadedMessages,
+  isLeftForViewer,
+  resolveRoleFromParsed,
+  roleFlags,
+} from "../../FileSendUI/chatIdentity";
 interface ReplyMessage {
   // New: For reply context
   id: number;
@@ -67,6 +88,7 @@ interface ChatMessage {
     imageUrl?: string;
   } | null;
   tempId?: string;
+  messageId?: string;
   replyTo?: ReplyMessage | null;
   edited?: boolean;
   editedAt?: string;
@@ -129,10 +151,12 @@ interface UpdateItem {
 }
 const HeadClientProjectInfo: React.FC = () => {
   const [replyToMessage, setReplyToMessage] = useState<ReplyMessage | null>(
-    null
+    null,
   );
   const [showTimeLimitPopup, setShowTimeLimitPopup] = useState(false);
-  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(
+    null,
+  );
   const [messageMenuIndex, setMessageMenuIndex] = useState<number | null>(null);
   const descriptionRef = useRef<HTMLDivElement>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -144,10 +168,115 @@ const HeadClientProjectInfo: React.FC = () => {
   const [newMessage, setNewMessage] = useState<string>("");
   const [updatesList, setUpdatesList] = useState<UpdateItem[]>([]);
   const [projectDetails, setProjectDetails] = useState<ProjectDetails | null>(
-    null
+    null,
   );
   const isCompleted = projectDetails?.status === "Completed";
-const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
+  const [uploadTasks, setUploadTasks] = useState<Record<string, UploadTask>>(
+    {},
+  );
+  const getFileDisplayUrl = (url: string | undefined): string =>
+    toAbsoluteFileUrl(url, serverURL);
+
+  const uploadManager = useChunkedUpload({
+    projectId: projectDetails?.project_id ? String(projectDetails.project_id) : "",
+
+    onProgress: (task) => {
+      setUploadTasks((prev) => ({
+        ...prev,
+        [task.id]: task,
+      }));
+    },
+
+    onComplete: (task, result: any) => {
+      const payload = result?.data ? result.data : result;
+
+      // Socket/DB store relative paths; UI always renders absolute URLs.
+      const relativeUrl = toRelativeFileUrl(
+        payload?.fileUrl || payload?.url || "",
+        serverURL,
+      );
+      const absoluteUrl = toAbsoluteFileUrl(relativeUrl, serverURL);
+      const fileName = payload?.fileName || payload?.name || task.fileName;
+      const fileType =
+        payload?.fileType ||
+        payload?.type ||
+        task.fileType ||
+        "application/octet-stream";
+
+      setUploadTasks((prev) => {
+        const next = { ...prev };
+        delete next[task.id];
+        return next;
+      });
+
+      if (!relativeUrl || !fileName) {
+        console.error("Upload completed but missing fileUrl/fileName", result);
+        return;
+      }
+
+      const completedTimestamp = new Date().toISOString();
+      const replyMeta = (task.meta?.replyTo as ReplyMessage | null) || null;
+      const captionMeta =
+        (task.meta?.caption as string | undefined) || undefined;
+
+      const completedMsg: ChatMessage = {
+        type: "file",
+        isLeft: false,
+        fromClient: false,
+        fromHead: true,
+        fromTeamLeader: false,
+        timestamp: completedTimestamp,
+        seen_by: [],
+        tempId: task.id,
+        file: {
+          name: fileName,
+          url: absoluteUrl,
+          type: fileType,
+        },
+        caption: captionMeta,
+        mention: null,
+        replyTo: replyMeta,
+      };
+
+      setChatMessages((prev) => appendLocalFileMessage(prev, completedMsg));
+
+      if (projectDetails?.project_id) {
+        emitChatFileMessage({
+          socket,
+          role: "head",
+          projectId: projectDetails.project_id,
+          msgData: {
+            name: fileName,
+            url: relativeUrl,
+            type: fileType,
+          },
+          caption: captionMeta || null,
+          timestamp: completedTimestamp,
+          tempId: task.id,
+          replyTo: replyMeta,
+          extra: {
+            headId: parsedData?.headId || headId || "default_head_id",
+          },
+        });
+      }
+    },
+    onError: (task) => {
+      setUploadTasks((prev) => ({
+        ...prev,
+        [task.id]: task,
+      }));
+    },
+
+    onCancelled: (task) => {
+      setUploadTasks((prev) => {
+        const next = { ...prev };
+        delete next[task.id];
+        return next;
+      });
+    },
+  });
+  const isChatDisabled =
+    projectDetails?.status === "Completed" || projectDetails?.status === "Hold";
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { item: locationItem } = location.state || {};
@@ -177,6 +306,16 @@ const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?
     useState<Employee | null>(null);
   const [securityKeyInput, setSecurityKeyInput] = useState("");
   const { socket, connected, onEvent, emitEvent } = useSocket();
+  // ========== TEMPORARY SOCKET DEBUG ==========
+  useEffect(() => {
+    console.log("🔌 Socket Debug:", {
+      hasSocket: !!socket,
+      connected,
+      socketId: socket?.id,
+      projectId: projectDetails?.project_id,
+    });
+  }, [socket, connected, projectDetails?.project_id]);
+  // ===========================================
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [showSOWModal, setShowSOWModal] = useState(false);
   const [sowFields, setSowFields] = useState<
@@ -187,21 +326,24 @@ const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?
   ]);
 
   const isWithinEditWindow = (msg: ChatMessage): boolean => {
-  if (!msg.timestamp) return false;
-  const sent = new Date(msg.timestamp).getTime();
-  return Date.now() - sent < 2 * 60 * 1000; // 2 minutes
-};
+    if (!msg.timestamp) return false;
+    const sent = new Date(msg.timestamp).getTime();
+    return Date.now() - sent < 2 * 60 * 1000; // 2 minutes
+  };
 
-
-  const [progress, setProgress] = useState({ start: 'no', payment: '0%', work: '0%' });
+  const [progress, setProgress] = useState({
+    start: "no",
+    payment: "0%",
+    work: "0%",
+  });
   const localRole = "Head";
 
   const handleReplyToMessage = (msg: ChatMessage) => {
     const sender = msg.fromClient
       ? "Client"
       : msg.fromTeamLeader
-      ? "Team Leader"
-      : "Head";
+        ? "Team Leader"
+        : "Head";
     const content =
       msg.type === "text"
         ? msg.message?.substring(0, 50) +
@@ -215,7 +357,7 @@ const isChatDisabled = projectDetails?.status === "Completed" || projectDetails?
       timestamp: msg.timestamp,
     });
   };
-console.log("Project Details:", projectDetails);
+  console.log("Project Details:", projectDetails);
   const preloadImages = async (element: HTMLElement) => {
     const images = Array.from(element.querySelectorAll("img"));
     await Promise.all(
@@ -240,13 +382,11 @@ console.log("Project Details:", projectDetails);
             console.error(`Error preloading image ${img.src}:`, err);
           }
         }
-      })
+      }),
     );
   };
 
-  const generatePdfBlob = async (
-    htmlContent: string,
-  ): Promise<Blob> => {
+  const generatePdfBlob = async (htmlContent: string): Promise<Blob> => {
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = htmlContent;
     tempDiv.style.padding = "40px";
@@ -336,22 +476,25 @@ console.log("Project Details:", projectDetails);
       if (!projectDetails?.project_id) return;
       try {
         const response = await getData(
-          `employees/fetch_employee_by_projectid/${projectDetails.project_id}`
+          `employees/fetch_employee_by_projectid/${projectDetails.project_id}`,
         );
         if (response) {
           console.log("RESSSSSSS", response.data);
           const allEmps = response.data.employees || [];
           const monitorsFiltered = allEmps.filter(
-            (e: Employee) => e.status === "Project Monitor"
+            (e: Employee) => e.status === "Project Monitor",
           );
           const employeesFiltered = allEmps.filter(
-            (e: Employee) => e.status !== "Project Monitor"
+            (e: Employee) => e.status !== "Project Monitor",
           );
           setEmployees(
-            employeesFiltered.map((e: Employee) => ({ ...e, isMonitor: false }))
+            employeesFiltered.map((e: Employee) => ({
+              ...e,
+              isMonitor: false,
+            })),
           );
           setMonitors(
-            monitorsFiltered.map((m: Employee) => ({ ...m, isMonitor: true }))
+            monitorsFiltered.map((m: Employee) => ({ ...m, isMonitor: true })),
           );
         }
       } catch (error) {
@@ -362,105 +505,111 @@ console.log("Project Details:", projectDetails);
   }, [projectDetails?.project_id]);
 
   useEffect(() => {
-  const fetchProgress = async () => {
-    if (projectDetails?.project_id) {
-      try {
-        const progressData = await getData(`clientproject/get_progress/${projectDetails.project_id}`);
-        if (progressData.status) {
-          setProgress(progressData.progress);
+    const fetchProgress = async () => {
+      if (projectDetails?.project_id) {
+        try {
+          const progressData = await getData(
+            `clientproject/get_progress/${projectDetails.project_id}`,
+          );
+          if (progressData.status) {
+            setProgress(progressData.progress);
+          }
+        } catch (err) {
+          console.error("Error fetching progress:", err);
         }
-      } catch (err) {
-        console.error("Error fetching progress:", err);
       }
-    }
-  };
-  fetchProgress();
-}, [projectDetails]);
+    };
+    fetchProgress();
+  }, [projectDetails]);
 
-useEffect(() => {
-  if (!socket) return;
+  useEffect(() => {
+    if (!socket) return;
 
-  const handleProjectStatusUpdated = (data: { projectId: string | number; status: string }) => {
-    if (String(data.projectId) !== String(projectDetails?.project_id)) return;
-    setProjectDetails((prev) => (prev ? { ...prev, status: data.status } : prev));
-  };
+    const handleProjectStatusUpdated = (data: {
+      projectId: string | number;
+      status: string;
+    }) => {
+      if (String(data.projectId) !== String(projectDetails?.project_id)) return;
+      setProjectDetails((prev) =>
+        prev ? { ...prev, status: data.status } : prev,
+      );
+    };
 
-  socket.on("projectStatusUpdated", handleProjectStatusUpdated);
+    socket.on("projectStatusUpdated", handleProjectStatusUpdated);
 
-  return () => {
-    socket.off("projectStatusUpdated", handleProjectStatusUpdated);
-  };
-}, [socket, projectDetails?.project_id]);
+    return () => {
+      socket.off("projectStatusUpdated", handleProjectStatusUpdated);
+    };
+  }, [socket, projectDetails?.project_id]);
 
-const processUpdates = (messages: ChatMessage[]) => {
-  const tempUpdates: (Omit<UpdateItem, "number"> & {
-    parsedNumber?: number;
-  })[] = [];
+  const processUpdates = (messages: ChatMessage[]) => {
+    const tempUpdates: (Omit<UpdateItem, "number"> & {
+      parsedNumber?: number;
+    })[] = [];
 
-  messages.forEach((msg) => {
-    if (
-      msg.fromClient &&
-      msg.type === "text" &&
-      msg.message?.startsWith("@update_")
-    ) {
-      let title: string;
-      const newMatch = msg.message.match(/@update_([^:]+):(.*)/s);
-      if (newMatch) {
-        title = newMatch[1].trim();
-      } else {
-        return;
+    messages.forEach((msg) => {
+      if (
+        msg.fromClient &&
+        msg.type === "text" &&
+        msg.message?.startsWith("@update_")
+      ) {
+        let title: string;
+        const newMatch = msg.message.match(/@update_([^:]+):(.*)/s);
+        if (newMatch) {
+          title = newMatch[1].trim();
+        } else {
+          return;
+        }
+        tempUpdates.push({
+          title,
+          messageTimestamp: msg.timestamp,
+          isText: true,
+        });
+      } else if (
+        msg.fromClient &&
+        msg.type === "file" &&
+        msg.file?.name?.startsWith("@update_") // ← FIXED: Added extra ?
+      ) {
+        const name = msg.file.name;
+        let title: string;
+
+        if (name.endsWith(".pdf")) {
+          const safeTitle = name.slice(8, -4);
+          title = safeTitle
+            .split("_")
+            .map((word) => word.charAt(0) + word.slice(1))
+            .join(" ");
+        } else {
+          return;
+        }
+
+        tempUpdates.push({
+          title,
+          messageTimestamp: msg.timestamp,
+          isText: false,
+        });
       }
-      tempUpdates.push({
-        title,
-        messageTimestamp: msg.timestamp,
-        isText: true,
-      });
-    } 
-    else if (
-      msg.fromClient &&
-      msg.type === "file" &&
-      msg.file?.name?.startsWith("@update_")   // ← FIXED: Added extra ?
-    ) {
-      const name = msg.file.name;
-      let title: string;
+    });
 
-      if (name.endsWith(".pdf")) {
-        const safeTitle = name.slice(8, -4);
-        title = safeTitle
-          .split("_")
-          .map((word) => word.charAt(0) + word.slice(1))
-          .join(" ");
-      } else {
-        return;
-      }
+    tempUpdates.sort((a, b) =>
+      a.messageTimestamp.localeCompare(b.messageTimestamp),
+    );
 
-      tempUpdates.push({
-        title,
-        messageTimestamp: msg.timestamp,
-        isText: false,
-      });
-    }
-  });
+    const updates = tempUpdates.map((upd, index) => ({
+      number: index + 1,
+      title: upd.title,
+      messageTimestamp: upd.messageTimestamp,
+      isText: upd.isText,
+    }));
 
-  tempUpdates.sort((a, b) =>
-    a.messageTimestamp.localeCompare(b.messageTimestamp)
-  );
-
-  const updates = tempUpdates.map((upd, index) => ({
-    number: index + 1,
-    title: upd.title,
-    messageTimestamp: upd.messageTimestamp,
-    isText: upd.isText,
-  }));
-
-  setUpdatesList(updates);
-};
+    setUpdatesList(updates);
+  };
   useEffect(() => {
     processUpdates(chatMessages);
   }, [chatMessages]);
   const highlightUpdate = (updateItem: UpdateItem) => {
     const msg = chatMessages.find(
-      (m) => m.timestamp === updateItem.messageTimestamp
+      (m) => m.timestamp === updateItem.messageTimestamp,
     );
     if (msg) {
       const currentIndex = chatMessages.indexOf(msg);
@@ -489,7 +638,7 @@ const processUpdates = (messages: ChatMessage[]) => {
       setFallbackLoading(true);
       try {
         const response = await getData(
-          `clientproject/get_project/${projectId}`
+          `clientproject/get_project/${projectId}`,
         );
         if (response.status && response.data) {
           setProjectDetails(response.data);
@@ -515,10 +664,8 @@ const processUpdates = (messages: ChatMessage[]) => {
   }, [item, searchParams]);
   useEffect(() => {
     if ("serviceWorker" in navigator && window.isSecureContext) {
-  navigator.serviceWorker
-    .register("/sw.js")
-    .catch(console.error);
-}
+      navigator.serviceWorker.register("/sw.js").catch(console.error);
+    }
     const handleNavigation = async () => {
       setLoading(true);
       setFallbackLoading(true);
@@ -545,7 +692,7 @@ const processUpdates = (messages: ChatMessage[]) => {
         sendReady();
         try {
           const response = await getData(
-            `clientproject/get_project/${projectId}`
+            `clientproject/get_project/${projectId}`,
           );
           if (response.status && response.data) {
             fetchedItem = response.data;
@@ -588,79 +735,38 @@ const processUpdates = (messages: ChatMessage[]) => {
   }, [socket, connected, projectDetails?.project_id]);
 
   useEffect(() => {
-    if (socket) {
-      onEvent("newMessage", (data: { fromRole: string; msg: any }) => {
-        const { fromRole, msg: incoming } = data;
-        setChatMessages((prev) => {
-          const isDuplicate = prev.some(
-            (m) =>
-              m.timestamp === incoming.timestamp &&
-              ((m.type === "text" && m.message === incoming.data) ||
-                (m.type === "file" && m.file?.name === incoming.data.name))
-          );
-          if (isDuplicate) {
-            return prev;
-          }
-          const existingIndex = prev.findIndex(
-            (m) => m.tempId === incoming.tempId
-          );
-          if (existingIndex !== -1) {
-            const updated = [...prev];
-            updated[existingIndex] = {
-              ...updated[existingIndex],
-              id: incoming.id,
-              caption: updated[existingIndex].caption || incoming.caption || undefined,
-              tempId: undefined,
-            };
-            return updated.sort((a, b) =>
-              a.timestamp.localeCompare(b.timestamp)
-            );
-          } else {
-            const fromClient = fromRole === "client";
-            const fromHead = fromRole === "head";
-            const fromTeamLeader = fromRole === "tl";
-            const isLeft = fromClient || fromTeamLeader;
-            const newMsg: ChatMessage = {
-              type: incoming.type === "text" ? "text" : "file",
-              isLeft,
-              fromClient,
-              fromHead,
-              fromTeamLeader,
-              timestamp: incoming.timestamp,
-              seen_by: incoming.seen_by,
-              id: incoming.id,
-              mention: incoming.mention,
-              replyTo: incoming.replyTo
-                ? {
-                    // New: Parse replyTo from socket data
-                    id: incoming.replyTo.id,
-                    sender: incoming.replyTo.sender,
-                    content: incoming.replyTo.content,
-                    type: incoming.replyTo.type,
-                    timestamp: incoming.replyTo.timestamp,
-                  }
-                : null,
-            };
-            if (incoming.type === "text") {
-              newMsg.message = incoming.data;
-            } else {
-              newMsg.file = {
-                name: incoming.data.name,
-                url: `${serverURL}${incoming.data.url}`,
-                type: incoming.data.type,
-              };
-              newMsg.caption = incoming.caption || undefined;
-            }
-            const updated = [...prev, newMsg].sort((a, b) =>
-              a.timestamp.localeCompare(b.timestamp)
-            );
-            return updated;
-          }
-        });
-        playNotification();
-      });
-    }
-  }, [socket, playNotification]);
+    if (!socket) return;
+
+    const apply = (data: {
+      fromRole?: string;
+      projectId?: string;
+      msg: any;
+    }) => {
+      if (
+        projectDetails?.project_id &&
+        data.projectId &&
+        String(data.projectId) !== String(projectDetails.project_id)
+      ) {
+        return;
+      }
+      if (!data.msg) return;
+      setChatMessages((prev) =>
+        mergeIncomingChatMessage(prev, data, { ownRole: "head" }),
+      );
+    };
+
+    const offNew = onEvent("newMessage", (data: any) => {
+      apply(data);
+      const fromRole = data?.fromRole || data?.msg?.fromRole;
+      if (fromRole && fromRole !== "head") playNotification();
+    });
+    const offAck = onEvent("messageAck", apply);
+
+    return () => {
+      offNew?.();
+      offAck?.();
+    };
+  }, [socket, onEvent, playNotification, projectDetails?.project_id]);
 
   useEffect(() => {
     onEvent("messageSeen", (data) => {
@@ -686,7 +792,7 @@ const processUpdates = (messages: ChatMessage[]) => {
             (m.id === index || m.timestamp === timestamp) &&
             m.fromClient === fromClient &&
             m.fromHead === fromHead &&
-            m.fromTeamLeader === fromTeamLeader
+            m.fromTeamLeader === fromTeamLeader,
         );
         if (!targetMessage) {
           console.log("No matching message found for update");
@@ -698,7 +804,7 @@ const processUpdates = (messages: ChatMessage[]) => {
           m.fromHead === fromHead &&
           m.fromTeamLeader === fromTeamLeader
             ? { ...m, seen_by }
-            : m
+            : m,
         );
         console.log(
           "Updated seen_by for message:",
@@ -707,8 +813,8 @@ const processUpdates = (messages: ChatMessage[]) => {
               (m.id === index || m.timestamp === timestamp) &&
               m.fromClient === fromClient &&
               m.fromHead === fromHead &&
-              m.fromTeamLeader === fromTeamLeader
-          )?.seen_by
+              m.fromTeamLeader === fromTeamLeader,
+          )?.seen_by,
         );
         return updated;
       });
@@ -730,105 +836,112 @@ const processUpdates = (messages: ChatMessage[]) => {
     let allMessages: ChatMessage[] = [];
     const maxLengthClient = Math.max(
       projectDetails.clientchats?.length || 0,
-      projectDetails.clientaudios?.length || 0
+      projectDetails.clientaudios?.length || 0,
     );
     const maxLengthHead = Math.max(
       projectDetails.headchats?.length || 0,
-      projectDetails.headaudios?.length || 0
+      projectDetails.headaudios?.length || 0,
     );
     const maxLengthTL = Math.max(
       projectDetails.tlchats?.length || 0,
-      projectDetails.tlaudios?.length || 0
+      projectDetails.tlaudios?.length || 0,
     );
     const maxLength = Math.max(maxLengthClient, maxLengthHead, maxLengthTL);
     for (let i = 0; i < maxLength; i++) {
-// ================== CLIENT CHATS ==================
-// ================== CLIENT CHATS (FIXED - isDeleted + edited) ==================
-if (i < (projectDetails.clientchats?.length || 0)) {
-  const chatStr = projectDetails.clientchats?.[i];
-  if (typeof chatStr === "string") {
-    try {
-      const parsed = JSON.parse(chatStr);
-      if (parsed.type === "system") continue;
+      // ================== CLIENT CHATS ==================
+      // ================== CLIENT CHATS (FIXED - isDeleted + edited) ==================
+      if (i < (projectDetails.clientchats?.length || 0)) {
+        const chatStr = projectDetails.clientchats?.[i];
+        if (typeof chatStr === "string") {
+          try {
+            const parsed = JSON.parse(chatStr);
+            if (parsed.type === "system") continue;
 
-      let timestamp = parsed.timestamp || new Date().toISOString();
-      const isDeleted = parsed.isDeleted === true;
+            let timestamp = parsed.timestamp || new Date().toISOString();
+            const isDeleted = parsed.isDeleted === true;
 
-      const msg: ChatMessage = {
-        type: parsed.type === "text" ? "text" : "file",
-        isLeft: true,
-        fromClient: true,
-        fromHead: false,
-        fromTeamLeader: false,
-        timestamp,
-        seen_by: parsed.seen_by || [],
-        id: i,
-        mention: parsed.mention || null,
-        replyTo: parsed.replyTo || null,
-        isDeleted,
-        deletedAt: parsed.deletedAt,
-        edited: parsed.edited || false,
-        editedAt: parsed.editedAt,
-        caption: parsed.caption,
-      };
+            const parsedRole = resolveRoleFromParsed(parsed, "client");
+            const flags = roleFlags(parsedRole);
+            const msg: ChatMessage = {
+              type: parsed.type === "text" ? "text" : "file",
+              isLeft: isLeftForViewer("head", parsedRole),
+              ...flags,
+              timestamp,
+              seen_by: parsed.seen_by || [],
+              id: i,
+              messageId: parsed.messageId,
+              mention: parsed.mention || null,
+              replyTo: parsed.replyTo || null,
+              isDeleted,
+              deletedAt: parsed.deletedAt,
+              edited: parsed.edited || false,
+              editedAt: parsed.editedAt,
+              caption: parsed.caption,
+            };
 
-      if (!isDeleted) {
-        if (parsed.type === "text") {
-          msg.message = parsed.data;
-        } else if (parsed.data) {
-          msg.file = {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
-          };
+            if (!isDeleted) {
+              if (parsed.type === "text") {
+                msg.message = parsed.data;
+              } else if (parsed.data) {
+                msg.file = {
+                  name: parsed.data.name,
+                  url: toAbsoluteFileUrl(parsed.data.url, serverURL),
+                  type: parsed.data.type || "application/octet-stream",
+                };
+              }
+            }
+            allMessages.push(msg);
+          } catch (e) {
+            console.error("Error parsing client chat:", e);
+          }
         }
       }
-      allMessages.push(msg);
-    } catch (e) {
-      console.error("Error parsing client chat:", e);
-    }
-  }
-}
 
-// ================== CLIENT AUDIOS (FIXED) ==================
-if (projectDetails.clientaudios && i < projectDetails.clientaudios.length) {
-  const audioStr = projectDetails.clientaudios[i];
-  if (typeof audioStr === "string") {
-    try {
-      const parsed = JSON.parse(audioStr);
-      let timestamp = parsed.timestamp || new Date().toISOString();
-      const isDeleted = parsed.isDeleted === true;
+      // ================== CLIENT AUDIOS (FIXED) ==================
+      if (
+        projectDetails.clientaudios &&
+        i < projectDetails.clientaudios.length
+      ) {
+        const audioStr = projectDetails.clientaudios[i];
+        if (typeof audioStr === "string") {
+          try {
+            const parsed = JSON.parse(audioStr);
+            let timestamp = parsed.timestamp || new Date().toISOString();
+            const isDeleted = parsed.isDeleted === true;
 
-      const msg: ChatMessage = {
-        type: "file",
-        isLeft: true,
-        fromClient: true,
-        fromHead: false,
-        fromTeamLeader: false,
-        timestamp,
-        seen_by: parsed.seen_by || [],
-        id: i,
-        mention: parsed.mention || null,
-        replyTo: parsed.replyTo || null,
-        isDeleted,
-        deletedAt: parsed.deletedAt,
-        edited: parsed.edited || false,
-        editedAt: parsed.editedAt,
-        caption: parsed.caption,
-        file: !isDeleted && parsed.data
-          ? {
-              name: parsed.data.name,
-              url: `${serverURL}${parsed.data.url}`,
-              type: parsed.data.type,
-            }
-          : undefined,
-      };
-      allMessages.push(msg);
-    } catch (e) {
-      console.error("Error parsing client audio:", e);
-    }
-  }
-}      if (projectDetails.headchats && i < projectDetails.headchats.length) {
+            const parsedRole = resolveRoleFromParsed(parsed, "client");
+            const flags = roleFlags(parsedRole);
+            const msg: ChatMessage = {
+              type: "file",
+              isLeft: isLeftForViewer("head", parsedRole),
+              ...flags,
+              timestamp,
+              seen_by: parsed.seen_by || [],
+              id: i,
+              messageId: parsed.messageId,
+              mention: parsed.mention || null,
+              replyTo: parsed.replyTo || null,
+              isDeleted,
+              deletedAt: parsed.deletedAt,
+              edited: parsed.edited || false,
+              editedAt: parsed.editedAt,
+              caption: parsed.caption,
+              file:
+                !isDeleted && parsed.data
+                  ? {
+                      name: parsed.data.name,
+                      url: toAbsoluteFileUrl(parsed.data.url, serverURL),
+                      type: parsed.data.type || "application/octet-stream",
+                    }
+                  : undefined,
+            };
+            allMessages.push(msg);
+          } catch (e) {
+            console.error("Error parsing client audio:", e);
+          }
+        }
+      }
+      if (projectDetails.headchats && i < projectDetails.headchats.length) {
         const chatStr = projectDetails.headchats[i];
         try {
           const parsed = JSON.parse(chatStr);
@@ -836,15 +949,15 @@ if (projectDetails.clientaudios && i < projectDetails.clientaudios.length) {
           if (!timestamp || isNaN(new Date(timestamp).getTime())) {
             timestamp = new Date().toISOString();
           }
+          const parsedRole = resolveRoleFromParsed(parsed, "head");
           const msg: ChatMessage = {
             type: parsed.type === "text" ? "text" : "file",
-            isLeft: false,
-            fromClient: false,
-            fromHead: true,
-            fromTeamLeader: false,
+            isLeft: isLeftForViewer("head", parsedRole) ? true : false,
+            ...roleFlags(parsedRole),
             timestamp,
             seen_by: parsed.seen_by || [],
             id: i,
+            messageId: parsed.messageId,
             mention: parsed.mention || null,
             replyTo: parsed.replyTo || null,
             edited: parsed.edited || false,
@@ -859,7 +972,7 @@ if (projectDetails.clientaudios && i < projectDetails.clientaudios.length) {
             } else {
               msg.file = {
                 name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
+                url: toAbsoluteFileUrl(parsed.data.url, serverURL),
                 type: parsed.data.type,
               };
             }
@@ -869,120 +982,120 @@ if (projectDetails.clientaudios && i < projectDetails.clientaudios.length) {
           console.error("Error parsing head chat:", e);
         }
       }
-if (projectDetails.headaudios && i < projectDetails.headaudios.length) {
-  const audioStr = projectDetails.headaudios[i];
-  try {
-    const parsed = JSON.parse(audioStr);
-    let timestamp = parsed.timestamp;
-    if (!timestamp || isNaN(new Date(timestamp).getTime())) {
-      timestamp = new Date().toISOString();
-    }
-    const msg: ChatMessage = {
-      type: "file",
-      isLeft: false,
-      fromClient: false,
-      fromHead: true,
-      fromTeamLeader: false,
-      timestamp,
-      seen_by: parsed.seen_by || [],
-      id: i,
-      mention: parsed.mention || null,
-      replyTo: parsed.replyTo || null,
-      isDeleted: parsed.isDeleted || false,
-      deletedAt: parsed.deletedAt,
-      caption: parsed.caption || undefined,
-    };
-    if (!parsed.isDeleted) {
-      msg.file = {
-        name: parsed.data.name,
-        url: `${serverURL}${parsed.data.url}`,
-        type: parsed.data.type,
-      };
-    }
-    allMessages.push(msg);
-  } catch (e) {
-    console.error("Error parsing head audio:", e);
-  }
-}
-// ================== TL CHATS ==================
-if (projectDetails.tlchats && i < projectDetails.tlchats.length) {
-  const chatStr = projectDetails.tlchats[i];
-  try {
-    const parsed = JSON.parse(chatStr);
-    let timestamp = parsed.timestamp || new Date().toISOString();
+      if (projectDetails.headaudios && i < projectDetails.headaudios.length) {
+        const audioStr = projectDetails.headaudios[i];
+        try {
+          const parsed = JSON.parse(audioStr);
+          let timestamp = parsed.timestamp;
+          if (!timestamp || isNaN(new Date(timestamp).getTime())) {
+            timestamp = new Date().toISOString();
+          }
+          const parsedRole = resolveRoleFromParsed(parsed, "head");
+          const msg: ChatMessage = {
+            type: "file",
+            isLeft: isLeftForViewer("head", parsedRole) ? true : false,
+            ...roleFlags(parsedRole),
+            timestamp,
+            seen_by: parsed.seen_by || [],
+            id: i,
+            messageId: parsed.messageId,
+            mention: parsed.mention || null,
+            replyTo: parsed.replyTo || null,
+            isDeleted: parsed.isDeleted || false,
+            deletedAt: parsed.deletedAt,
+            caption: parsed.caption || undefined,
+          };
+          if (!parsed.isDeleted) {
+            msg.file = {
+              name: parsed.data.name,
+              url: toAbsoluteFileUrl(parsed.data.url, serverURL),
+              type: parsed.data.type,
+            };
+          }
+          allMessages.push(msg);
+        } catch (e) {
+          console.error("Error parsing head audio:", e);
+        }
+      }
+      // ================== TL CHATS ==================
+      if (projectDetails.tlchats && i < projectDetails.tlchats.length) {
+        const chatStr = projectDetails.tlchats[i];
+        try {
+          const parsed = JSON.parse(chatStr);
+          let timestamp = parsed.timestamp || new Date().toISOString();
 
-    const msg: ChatMessage = {
-      type: parsed.type === "text" ? "text" : "file",
-      isLeft: true,
-      fromClient: false,
-      fromHead: false,
-      fromTeamLeader: true,
-      timestamp,
-      seen_by: parsed.seen_by || [],
-      id: i,
-      mention: parsed.mention || null,
-      replyTo: parsed.replyTo || null,
-      isDeleted: parsed.isDeleted || false,
-      deletedAt: parsed.deletedAt,
-      edited: parsed.edited || false,
-      editedAt: parsed.editedAt,
-      caption: parsed.caption || undefined,
-    };
+          const parsedRole = resolveRoleFromParsed(parsed, "tl");
+          const msg: ChatMessage = {
+            type: parsed.type === "text" ? "text" : "file",
+            isLeft: isLeftForViewer("head", parsedRole),
+            ...roleFlags(parsedRole),
+            timestamp,
+            seen_by: parsed.seen_by || [],
+            id: i,
+            messageId: parsed.messageId,
+            mention: parsed.mention || null,
+            replyTo: parsed.replyTo || null,
+            isDeleted: parsed.isDeleted || false,
+            deletedAt: parsed.deletedAt,
+            edited: parsed.edited || false,
+            editedAt: parsed.editedAt,
+            caption: parsed.caption || undefined,
+          };
 
-    if (!parsed.isDeleted) {
-      if (parsed.type === "text") {
-        msg.message = parsed.data;
-      } else if (parsed.data) {
-        msg.file = {
-          name: parsed.data.name,
-          url: `${serverURL}${parsed.data.url}`,
-          type: parsed.data.type,
-        };
+          if (!parsed.isDeleted) {
+            if (parsed.type === "text") {
+              msg.message = parsed.data;
+            } else if (parsed.data) {
+              msg.file = {
+                name: parsed.data.name,
+                url: toAbsoluteFileUrl(parsed.data.url, serverURL),
+                type: parsed.data.type,
+              };
+            }
+          }
+          allMessages.push(msg);
+        } catch (e) {
+          console.error("Error parsing TL chat:", e);
+        }
+      }
+
+      // ================== TL AUDIOS ==================
+      if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
+        const audioStr = projectDetails.tlaudios[i];
+        try {
+          const parsed = JSON.parse(audioStr);
+          let timestamp = parsed.timestamp || new Date().toISOString();
+
+          const parsedRole = resolveRoleFromParsed(parsed, "tl");
+          const msg: ChatMessage = {
+            type: "file",
+            isLeft: isLeftForViewer("head", parsedRole),
+            ...roleFlags(parsedRole),
+            timestamp,
+            seen_by: parsed.seen_by || [],
+            id: i,
+            messageId: parsed.messageId,
+            mention: parsed.mention || null,
+            replyTo: parsed.replyTo || null,
+            isDeleted: parsed.isDeleted || false,
+            deletedAt: parsed.deletedAt,
+            caption: parsed.caption || undefined,
+          };
+
+          if (!parsed.isDeleted && parsed.data) {
+            msg.file = {
+              name: parsed.data.name,
+              url: toAbsoluteFileUrl(parsed.data.url, serverURL),
+              type: parsed.data.type,
+            };
+          }
+          allMessages.push(msg);
+        } catch (e) {
+          console.error("Error parsing TL audio:", e);
+        }
       }
     }
-    allMessages.push(msg);
-  } catch (e) {
-    console.error("Error parsing TL chat:", e);
-  }
-}
-
-// ================== TL AUDIOS ==================
-if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
-  const audioStr = projectDetails.tlaudios[i];
-  try {
-    const parsed = JSON.parse(audioStr);
-    let timestamp = parsed.timestamp || new Date().toISOString();
-
-    const msg: ChatMessage = {
-      type: "file",
-      isLeft: true,
-      fromClient: false,
-      fromHead: false,
-      fromTeamLeader: true,
-      timestamp,
-      seen_by: parsed.seen_by || [],
-      id: i,
-      mention: parsed.mention || null,
-      replyTo: parsed.replyTo || null,
-      isDeleted: parsed.isDeleted || false,
-      deletedAt: parsed.deletedAt,
-      caption: parsed.caption || undefined,
-    };
-
-    if (!parsed.isDeleted && parsed.data) {
-      msg.file = {
-        name: parsed.data.name,
-        url: `${serverURL}${parsed.data.url}`,
-        type: parsed.data.type,
-      };
-    }
-    allMessages.push(msg);
-  } catch (e) {
-    console.error("Error parsing TL audio:", e);
-  }
-}
-    }
-    allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    allMessages = dedupeLoadedMessages(allMessages);
     setChatMessages(allMessages);
     processUpdates(allMessages);
   }, [projectDetails]);
@@ -1010,7 +1123,7 @@ if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
           }
         });
       },
-      { threshold: 0.5 }
+      { threshold: 0.5 },
     );
     return () => observer.current?.disconnect();
   }, [chatMessages, storedUserRole, projectDetails?.project_id]);
@@ -1031,166 +1144,197 @@ if (projectDetails.tlaudios && i < projectDetails.tlaudios.length) {
   }, [chatMessages]);
 
   // === NEW: Live Client + TL edit/delete sync in Head view ===
-useEffect(() => {
-  if (!socket || !projectDetails?.project_id) return;
+  useEffect(() => {
+    if (!socket || !projectDetails?.project_id) return;
 
-  const handleClientEdited = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    console.log("📥 Head received clientMessageEdited:", data);
-    setChatMessages((prev) =>
-      prev.map((m) => {
-        const idMatch = m.id === data.index;
-        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
-        if ((idMatch || timeMatch) && m.fromClient) {
-          return { ...m, message: data.newData || data.updatedMsg?.data, edited: true, editedAt: data.editedAt || data.updatedMsg?.editedAt };
-        }
-        return m;
-      })
-    );
-  };
+    const handleClientEdited = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      console.log("📥 Head received clientMessageEdited:", data);
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          const idMatch = m.id === data.index;
+          const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+          if ((idMatch || timeMatch) && m.fromClient) {
+            return {
+              ...m,
+              message: data.newData || data.updatedMsg?.data,
+              edited: true,
+              editedAt: data.editedAt || data.updatedMsg?.editedAt,
+            };
+          }
+          return m;
+        }),
+      );
+    };
 
-  const handleClientDeleted = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    console.log("📥 Head received clientMessageDeleted:", data);
-    setChatMessages((prev) =>
-      prev.map((m) => {
-        const idMatch = m.id === data.index;
-        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
-        if ((idMatch || timeMatch) && m.fromClient) {
-          return {
-            ...m,
-            isDeleted: true,
-            deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
-            message: undefined,
-            file: undefined,
-            caption: undefined,
-          };
-        }
-        return m;
-      })
-    );
-  };
+    const handleClientDeleted = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      console.log("📥 Head received clientMessageDeleted:", data);
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          const idMatch = m.id === data.index;
+          const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+          if ((idMatch || timeMatch) && m.fromClient) {
+            return {
+              ...m,
+              isDeleted: true,
+              deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
+              message: undefined,
+              file: undefined,
+              caption: undefined,
+            };
+          }
+          return m;
+        }),
+      );
+    };
 
-  const handleTLEdited = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        (m.id === data.index || m.timestamp === data.timestamp) && m.fromTeamLeader
-          ? { ...m, message: data.newData, edited: true, editedAt: data.editedAt }
-          : m
-      )
-    );
-  };
+    const handleTLEdited = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          (m.id === data.index || m.timestamp === data.timestamp) &&
+          m.fromTeamLeader
+            ? {
+                ...m,
+                message: data.newData,
+                edited: true,
+                editedAt: data.editedAt,
+              }
+            : m,
+        ),
+      );
+    };
 
-  const handleTLDeleted = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        (m.id === data.index || m.timestamp === data.timestamp) && m.fromTeamLeader
-          ? { ...m, isDeleted: true, deletedAt: data.deletedAt, message: undefined, file: undefined }
-          : m
-      )
-    );
-  };
+    const handleTLDeleted = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          (m.id === data.index || m.timestamp === data.timestamp) &&
+          m.fromTeamLeader
+            ? {
+                ...m,
+                isDeleted: true,
+                deletedAt: data.deletedAt,
+                message: undefined,
+                file: undefined,
+              }
+            : m,
+        ),
+      );
+    };
 
-  socket.on("clientMessageEdited", handleClientEdited);
-  socket.on("clientMessageDeleted", handleClientDeleted);
-  socket.on("tlMessageEdited", handleTLEdited);
-  socket.on("tlMessageDeleted", handleTLDeleted);
+    socket.on("clientMessageEdited", handleClientEdited);
+    socket.on("clientMessageDeleted", handleClientDeleted);
+    socket.on("tlMessageEdited", handleTLEdited);
+    socket.on("tlMessageDeleted", handleTLDeleted);
 
-  return () => {
-    socket.off("clientMessageEdited", handleClientEdited);
-    socket.off("clientMessageDeleted", handleClientDeleted);
-    socket.off("tlMessageEdited", handleTLEdited);
-    socket.off("tlMessageDeleted", handleTLDeleted);
-  };
-}, [socket, projectDetails?.project_id]);
+    return () => {
+      socket.off("clientMessageEdited", handleClientEdited);
+      socket.off("clientMessageDeleted", handleClientDeleted);
+      socket.off("tlMessageEdited", handleTLEdited);
+      socket.off("tlMessageDeleted", handleTLDeleted);
+    };
+  }, [socket, projectDetails?.project_id]);
 
-// === NEW: Live sync for Client + Head edit/delete in TL view ===
-useEffect(() => {
-  if (!socket || !projectDetails?.project_id) return;
+  // === NEW: Live sync for Client + Head edit/delete in TL view ===
+  useEffect(() => {
+    if (!socket || !projectDetails?.project_id) return;
 
-  const handleClientEdited = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    console.log("📥 TL received clientMessageEdited:", data);
-    setChatMessages((prev) =>
-      prev.map((m) => {
-        const idMatch = m.id === data.index;
-        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
-        if ((idMatch || timeMatch) && m.fromClient) {
-          return {
-            ...m,
-            message: data.newData || data.updatedMsg?.data,
-            edited: true,
-            editedAt: data.editedAt || data.updatedMsg?.editedAt,
-          };
-        }
-        return m;
-      })
-    );
-  };
+    const handleClientEdited = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      console.log("📥 TL received clientMessageEdited:", data);
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          const idMatch = m.id === data.index;
+          const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+          if ((idMatch || timeMatch) && m.fromClient) {
+            return {
+              ...m,
+              message: data.newData || data.updatedMsg?.data,
+              edited: true,
+              editedAt: data.editedAt || data.updatedMsg?.editedAt,
+            };
+          }
+          return m;
+        }),
+      );
+    };
 
-  const handleClientDeleted = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    console.log("📥 TL received clientMessageDeleted:", data);
-    setChatMessages((prev) =>
-      prev.map((m) => {
-        const idMatch = m.id === data.index;
-        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
-        if ((idMatch || timeMatch) && m.fromClient) {
-          return {
-            ...m,
-            isDeleted: true,
-            deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
-            message: undefined,
-            file: undefined,
-            caption: undefined,
-          };
-        }
-        return m;
-      })
-    );
-  };
+    const handleClientDeleted = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      console.log("📥 TL received clientMessageDeleted:", data);
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          const idMatch = m.id === data.index;
+          const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+          if ((idMatch || timeMatch) && m.fromClient) {
+            return {
+              ...m,
+              isDeleted: true,
+              deletedAt: data.deletedAt || data.updatedMsg?.deletedAt,
+              message: undefined,
+              file: undefined,
+              caption: undefined,
+            };
+          }
+          return m;
+        }),
+      );
+    };
 
-  const handleHeadEdited = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    console.log("📥 TL received headMessageEdited:", data);
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        (m.id === data.index || m.timestamp === data.timestamp) && m.fromHead
-          ? { ...m, message: data.newData, edited: true, editedAt: data.editedAt }
-          : m
-      )
-    );
-  };
+    const handleHeadEdited = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      console.log("📥 TL received headMessageEdited:", data);
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          (m.id === data.index || m.timestamp === data.timestamp) && m.fromHead
+            ? {
+                ...m,
+                message: data.newData,
+                edited: true,
+                editedAt: data.editedAt,
+              }
+            : m,
+        ),
+      );
+    };
 
-  const handleHeadDeleted = (data: any) => {
-    if (data.projectId !== projectDetails.project_id) return;
-    console.log("📥 TL received headMessageDeleted:", data);
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        (m.id === data.index || m.timestamp === data.timestamp) && m.fromHead
-          ? { ...m, isDeleted: true, deletedAt: data.deletedAt, message: undefined, file: undefined }
-          : m
-      )
-    );
-  };
+    const handleHeadDeleted = (data: any) => {
+      if (data.projectId !== projectDetails.project_id) return;
+      console.log("📥 TL received headMessageDeleted:", data);
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          (m.id === data.index || m.timestamp === data.timestamp) && m.fromHead
+            ? {
+                ...m,
+                isDeleted: true,
+                deletedAt: data.deletedAt,
+                message: undefined,
+                file: undefined,
+              }
+            : m,
+        ),
+      );
+    };
 
-  socket.on("clientMessageEdited", handleClientEdited);
-  socket.on("clientMessageDeleted", handleClientDeleted);
-  socket.on("headMessageEdited", handleHeadEdited);
-  socket.on("headMessageDeleted", handleHeadDeleted);
+    socket.on("clientMessageEdited", handleClientEdited);
+    socket.on("clientMessageDeleted", handleClientDeleted);
+    socket.on("headMessageEdited", handleHeadEdited);
+    socket.on("headMessageDeleted", handleHeadDeleted);
 
-  return () => {
-    socket.off("clientMessageEdited", handleClientEdited);
-    socket.off("clientMessageDeleted", handleClientDeleted);
-    socket.off("headMessageEdited", handleHeadEdited);
-    socket.off("headMessageDeleted", handleHeadDeleted);
-  };
-}, [socket, projectDetails?.project_id]);
+    return () => {
+      socket.off("clientMessageEdited", handleClientEdited);
+      socket.off("clientMessageDeleted", handleClientDeleted);
+      socket.off("headMessageEdited", handleHeadEdited);
+      socket.off("headMessageDeleted", handleHeadDeleted);
+    };
+  }, [socket, projectDetails?.project_id]);
 
   const handleSubmitSOW = async () => {
     setLoading(true);
+    console.log("clicked");
+    
 
     try {
       let htmlContent = `
@@ -1267,8 +1411,7 @@ useEffect(() => {
 
       const sanitizedHtml = DOMPurify.sanitize(htmlContent);
 
-      const blob = await generatePdfBlob(
-        sanitizedHtml      );
+      const blob = await generatePdfBlob(sanitizedHtml);
 
       const fileName = `@SOW_${(projectDetails?.title || "untitled")
         .replace(/\s+/g, "_")
@@ -1327,10 +1470,7 @@ useEffect(() => {
   };
   const markMessageAsSeen = async (msg: ChatMessage) => {
     if (!projectDetails?.project_id || msg.id === undefined) return;
-    let messageType =
-      msg.type === "file" && msg.file?.type.startsWith("audio/")
-        ? "audio"
-        : "chat";
+    const messageType = msg.type === "file" ? "audio" : "chat";
     const viewer = "head";
     try {
       const response = await postData(
@@ -1343,7 +1483,7 @@ useEffect(() => {
           type: messageType,
           viewer,
           timestamp: msg.timestamp,
-        }
+        },
       );
       if (response.status) {
         setChatMessages((prev) =>
@@ -1357,8 +1497,8 @@ useEffect(() => {
               m.fromHead === msg.fromHead &&
               m.fromTeamLeader === msg.fromTeamLeader)
               ? { ...m, seen_by: [...new Set([...m.seen_by, viewer])] }
-              : m
-          )
+              : m,
+          ),
         );
       } else {
         console.error("Failed to mark message as seen:", response.message);
@@ -1367,6 +1507,7 @@ useEffect(() => {
       console.error("Error marking message as seen:", error);
     }
   };
+
   const [width, setWidth] = useState(window.innerWidth);
   useEffect(() => {
     const handleResize = () => setWidth(window.innerWidth);
@@ -1434,10 +1575,10 @@ useEffect(() => {
       return "Yesterday";
     } else {
       return date.toLocaleDateString("en-GB", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-});
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      });
     }
   };
 
@@ -1447,7 +1588,7 @@ useEffect(() => {
 
   const highlightMessageText = (
     text: string,
-    mention: ChatMessage["mention"]
+    mention: ChatMessage["mention"],
   ) => {
     if (!text) return text;
 
@@ -1459,7 +1600,7 @@ useEffect(() => {
       }`;
       highlighted = highlighted.replace(
         new RegExp(escapeRegExp(clientMentionStr), "gi"),
-        `<span style="color: #2934E3; font-weight: 500;">${clientMentionStr}</span>`
+        `<span style="color: #2934E3; font-weight: 500;">${clientMentionStr}</span>`,
       );
     }
 
@@ -1469,7 +1610,7 @@ useEffect(() => {
       }`;
       highlighted = highlighted.replace(
         new RegExp(escapeRegExp(tlMentionStr), "gi"),
-        `<span style="color: #2934E3; font-weight: 500;">${tlMentionStr}</span>`
+        `<span style="color: #2934E3; font-weight: 500;">${tlMentionStr}</span>`,
       );
     }
 
@@ -1479,7 +1620,7 @@ useEffect(() => {
       }`;
       highlighted = highlighted.replace(
         new RegExp(escapeRegExp(headMentionStr), "gi"),
-        `<span style="color: #2934E3; font-weight: 500;">${headMentionStr}</span>`
+        `<span style="color: #2934E3; font-weight: 500;">${headMentionStr}</span>`,
       );
     }
 
@@ -1487,13 +1628,13 @@ useEffect(() => {
       const mentionStr = `@${mention.name}`;
       highlighted = highlighted.replace(
         new RegExp(escapeRegExp(mentionStr), "gi"),
-        `<span style="color: #2934E3; font-weight: 500;">${mentionStr}</span>`
+        `<span style="color: #2934E3; font-weight: 500;">${mentionStr}</span>`,
       );
     }
 
     highlighted = highlighted.replace(
       /(@update_[^:\n]+:)/g,
-      '<span style="color: #4DD60B; font-weight: 500;">$1</span>'
+      '<span style="color: #4DD60B; font-weight: 500;">$1</span>',
     );
 
     return highlighted;
@@ -1579,7 +1720,7 @@ useEffect(() => {
         const mentionText = mentionMatch[0];
         const newBefore = before.substring(
           0,
-          before.length - mentionText.length
+          before.length - mentionText.length,
         );
         const after = newMessage.substring(cursorPos);
         setNewMessage(`${newBefore}${after}`);
@@ -1629,31 +1770,47 @@ useEffect(() => {
         ]
       : []),
   ];
-const handleSendMessage = async (
-  message: string,
-  type: "text" | "voice" | "file" = "text",
-  files?: { name: string; url: string; type: string; blob?: Blob }[],
-  caption?: string   // ← NEW: caption from MikeSearch (text + file)
-) => {
-  // If editing an existing message
-  if (editingMessage && type === "text") {
-    await sendEditedMessage();
-    return;
-  }
+  const handleSendMessage = async (
+    message: string,
+    type: "text" | "voice" | "file" = "text",
+    files?: { name: string; url: string; type: string; blob?: Blob }[],
+    caption?: string,
+  ) => {
+    console.log("🚀 handleSendMessage called", {
+      type,
+      hasFiles: !!files?.length,
+      hasProject: !!projectDetails?.project_id,
+      hasSocket: !!socket,
+      connected,
+      socketId: socket?.id,
+    });
 
-  if (
-    (message.trim() || (files && files.length > 0)) &&
-    projectDetails?.project_id &&
-    socket &&
-    connected
-  ) {
+    if (editingMessage && type === "text") {
+      await sendEditedMessage();
+      return;
+    }
+
+    if (
+      !(message.trim() || (files && files.length > 0)) ||
+      !projectDetails?.project_id ||
+      !socket
+    ) {
+      console.warn("❌ Blocked – missing data", {
+        hasMessage: !!message.trim(),
+        hasFiles: !!files?.length,
+        hasProject: !!projectDetails?.project_id,
+        hasSocket: !!socket,
+        connected,
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const projId = projectDetails.project_id;
       const timestamp = new Date().toISOString();
       const headId = parsedData?.headId || "default_head_id";
 
-      // Get current reply context (if user is replying to a message)
       const currentReplyTo = replyToMessage
         ? {
             id: replyToMessage.id,
@@ -1686,12 +1843,13 @@ const handleSendMessage = async (
 
         setChatMessages((prev) =>
           [...prev, optimisticMsg].sort((a, b) =>
-            a.timestamp.localeCompare(b.timestamp)
-          )
+            a.timestamp.localeCompare(b.timestamp),
+          ),
         );
 
         socket.emit("sendHeadMessage", {
           projectId: projId,
+          fromRole: "head",
           type: "text",
           msgData: message,
           timestamp,
@@ -1703,8 +1861,7 @@ const handleSendMessage = async (
 
         setNewMessage("");
         setReplyToMessage(null);
-      } 
-      else if (type === "voice" && files && files[0]?.blob) {
+      } else if (type === "voice" && files && files[0]?.blob) {
         const file = files[0];
         const formData = new FormData();
         formData.append("file", file.blob!, file.name);
@@ -1712,7 +1869,7 @@ const handleSendMessage = async (
 
         const uploadResponse = await postData(
           `clientproject/upload_file`,
-          formData
+          formData,
         );
 
         if (uploadResponse.status) {
@@ -1740,12 +1897,13 @@ const handleSendMessage = async (
 
             setChatMessages((prev) =>
               [...prev, optimisticMsg].sort((a, b) =>
-                a.timestamp.localeCompare(b.timestamp)
-              )
+                a.timestamp.localeCompare(b.timestamp),
+              ),
             );
 
             socket.emit("sendHeadMessage", {
               projectId: projId,
+              fromRole: "head",
               type: "audio",
               msgData: {
                 name: file.name,
@@ -1762,64 +1920,90 @@ const handleSendMessage = async (
             setReplyToMessage(null);
           }
         }
-      } 
-      else if (type === "file" && files && files.length > 0) {
-        for (const file of files) {
-          if (file.blob) {
-            const formData = new FormData();
-            formData.append("file", file.blob, file.name);
-            formData.append("projectId", projId);
+      } else if (type === "file" && files && files.length > 0) {
+        console.log("📁 handleSendMessage FILE branch", files);
 
-            const uploadResponse = await postData(
-              `clientproject/upload_file`,
-              formData
+        if (files.some((file) => file.blob)) {
+          const fileObjects = files
+            .filter(
+              (
+                file,
+              ): file is {
+                name: string;
+                url: string;
+                type: string;
+                blob: Blob;
+              } => !!file.blob,
+            )
+            .map((file) =>
+              file.blob instanceof File
+                ? file.blob
+                : new File([file.blob], file.name, {
+                    type:
+                      file.type || file.blob.type || "application/octet-stream",
+                  }),
             );
 
-            if (uploadResponse.status) {
-              const url = uploadResponse.data?.fileUrl || "";
-              if (url) {
-                const tempId = uuidv4();
-
-                const optimisticMsg: ChatMessage = {
-                  file: {
-                    name: file.name,
-                    url: `${serverURL}${url}`,
-                    type: file.type,
-                  },
-                  caption: caption || message.trim() || undefined,   // ← Caption support (priority to new param)
-                  isLeft: false,
-                  fromClient: false,
-                  fromHead: true,
-                  fromTeamLeader: false,
-                  type: "file",
-                  timestamp,
-                  seen_by: [],
-                  tempId,
-                  mention: null,
-                  replyTo: currentReplyTo,
-                };
-
-                setChatMessages((prev) =>
-                  [...prev, optimisticMsg].sort((a, b) =>
-                    a.timestamp.localeCompare(b.timestamp)
-                  )
-                );
-
-                socket.emit("sendHeadMessage", {
-                  projectId: projId,
-                  type: "file",
-                  msgData: { name: file.name, url, type: file.type },
-                  caption: caption || message.trim() || null,   // ← Send caption to backend
-                  timestamp,
-                  headId,
-                  mention: null,
-                  tempId,
-                  replyTo: currentReplyTo,
-                });
-              }
-            }
-          }
+          uploadManager.addFiles(fileObjects, {
+            caption: caption || message.trim(),
+            uploaderRole: "head",
+            uploaderId: headId || undefined,
+            replyTo: currentReplyTo,
+          });
+          setNewMessage("");
+          setReplyToMessage(null);
+          return;
         }
+
+        for (const file of files) {
+          const url = file.url;
+          if (!url) continue;
+
+          const tempId = uuidv4();
+
+          const optimisticMsg: ChatMessage = {
+            file: {
+              name: file.name,
+              url: `${serverURL}${url}`,
+              type: file.type,
+            },
+            caption: caption || message.trim() || undefined,
+            isLeft: false,
+            fromClient: false,
+            fromHead: true,
+            fromTeamLeader: false,
+            type: "file",
+            timestamp,
+            seen_by: [],
+            tempId,
+            mention: null,
+            replyTo: currentReplyTo,
+          };
+
+          setChatMessages((prev) =>
+            [...prev, optimisticMsg].sort((a, b) =>
+              a.timestamp.localeCompare(b.timestamp),
+            ),
+          );
+
+          socket.emit("sendHeadMessage", {
+            projectId: projId,
+            fromRole: "head",
+            type: "file",
+            msgData: {
+              name: file.name,
+              url,
+              type: file.type,
+            },
+            caption: caption || message.trim() || null,
+            timestamp,
+            headId,
+            mention: null,
+            tempId,
+            replyTo: currentReplyTo,
+          });
+        }
+
         setReplyToMessage(null);
       }
     } catch (error) {
@@ -1828,9 +2012,7 @@ const handleSendMessage = async (
       setLoading(false);
       setEditingMessage(null);
     }
-  }
-};
-  // In HeadClientProjectInfo.tsx
+  };
 
   const handleClickOnReplyBubble = (reply: ReplyMessage) => {
     const originalMsg = chatMessages.find(
@@ -1838,7 +2020,7 @@ const handleSendMessage = async (
         m.timestamp === reply.timestamp &&
         ((reply.sender === "Client" && m.fromClient) ||
           (reply.sender === "Team Leader" && m.fromTeamLeader) ||
-          (reply.sender === "Head" && m.fromHead))
+          (reply.sender === "Head" && m.fromHead)),
     );
     if (originalMsg) {
       const index = chatMessages.indexOf(originalMsg);
@@ -1860,144 +2042,150 @@ const handleSendMessage = async (
     }
   };
 
-// ==================== ROBUST TL EDIT/DELETE LISTENER (Head side) ====================
-useEffect(() => {
-  if (!socket) return;
+  // ==================== ROBUST TL EDIT/DELETE LISTENER (Head side) ====================
+  useEffect(() => {
+    if (!socket) return;
 
-  const handleTLEdited = (data: any) => {
-    if (data.projectId !== projectDetails?.project_id) return;
+    const handleTLEdited = (data: any) => {
+      if (data.projectId !== projectDetails?.project_id) return;
 
-    console.log("📥 Head received tlMessageEdited:", data); // TEMP debug
+      console.log("📥 Head received tlMessageEdited:", data); // TEMP debug
 
-    setChatMessages((prev) =>
-      prev.map((m) => {
-        const idMatch = m.id === data.index;
-        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
-        const isTL = m.fromTeamLeader === true;
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          const idMatch = m.id === data.index;
+          const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+          const isTL = m.fromTeamLeader === true;
 
-        if ((idMatch || timeMatch) && isTL) {
-          return {
-            ...m,
-            message: data.newData,
-            edited: true,
-            editedAt: data.editedAt,
-          };
-        }
-        return m;
-      })
-    );
-  };
-
-  const handleTLDeleted = (data: any) => {
-    if (data.projectId !== projectDetails?.project_id) return;
-
-    console.log("📥 Head received tlMessageDeleted:", data); // TEMP debug
-
-    setChatMessages((prev) =>
-      prev.map((m) => {
-        const idMatch = m.id === data.index;
-        const timeMatch = data.timestamp && m.timestamp === data.timestamp;
-        const isTL = m.fromTeamLeader === true;
-
-        if ((idMatch || timeMatch) && isTL) {
-          return {
-            ...m,
-            isDeleted: true,
-            deletedAt: data.deletedAt,
-            message: undefined,
-            file: undefined,
-            caption: undefined,
-          };
-        }
-        return m;
-      })
-    );
-  };
-
-  socket.on("tlMessageEdited", handleTLEdited);
-  socket.on("tlMessageDeleted", handleTLDeleted);
-
-  return () => {
-    socket.off("tlMessageEdited", handleTLEdited);
-    socket.off("tlMessageDeleted", handleTLDeleted);
-  };
-}, [socket, projectDetails?.project_id]);
-
-const handleEditMessage = (msg: ChatMessage) => {
-  if (msg.type !== "text" || msg.isDeleted) return;
-
-  if (!isWithinEditWindow(msg)) {
-    setShowTimeLimitPopup(true);
-    setTimeout(() => setShowTimeLimitPopup(false), 3500); // auto hide
-    setMessageMenuIndex(null);
-    return;
-  }
-
-  setEditingMessage(msg);
-  setNewMessage(msg.message || "");
-  inputRef.current?.focus();
-  setMessageMenuIndex(null);
-};
-
-const handleDeleteMessage = async (msg: ChatMessage) => {
-  setMessageMenuIndex(null);
-
-  if (!isWithinEditWindow(msg)) {
-    setShowTimeLimitPopup(true);
-    setTimeout(() => setShowTimeLimitPopup(false), 3500);
-    return;
-  }
-
-  // Optimistic UI
-  setChatMessages((prev) =>
-    prev.map((m) =>
-      m.timestamp === msg.timestamp && m.fromHead
-        ? {
-            ...m,
-            isDeleted: true,
-            deletedAt: new Date().toISOString(),
-            message: undefined,
-            file: undefined,
-            caption: undefined,
+          if ((idMatch || timeMatch) && isTL) {
+            return {
+              ...m,
+              message: data.newData,
+              edited: true,
+              editedAt: data.editedAt,
+            };
           }
-        : m
-    )
-  );
+          return m;
+        }),
+      );
+    };
 
-  if (socket && connected && projectDetails?.project_id) {
-    socket.emit("deleteHeadMessage", {
+    const handleTLDeleted = (data: any) => {
+      if (data.projectId !== projectDetails?.project_id) return;
+
+      console.log("📥 Head received tlMessageDeleted:", data); // TEMP debug
+
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          const idMatch = m.id === data.index;
+          const timeMatch = data.timestamp && m.timestamp === data.timestamp;
+          const isTL = m.fromTeamLeader === true;
+
+          if ((idMatch || timeMatch) && isTL) {
+            return {
+              ...m,
+              isDeleted: true,
+              deletedAt: data.deletedAt,
+              message: undefined,
+              file: undefined,
+              caption: undefined,
+            };
+          }
+          return m;
+        }),
+      );
+    };
+
+    socket.on("tlMessageEdited", handleTLEdited);
+    socket.on("tlMessageDeleted", handleTLDeleted);
+
+    return () => {
+      socket.off("tlMessageEdited", handleTLEdited);
+      socket.off("tlMessageDeleted", handleTLDeleted);
+    };
+  }, [socket, projectDetails?.project_id]);
+
+  const handleEditMessage = (msg: ChatMessage) => {
+    if (msg.type !== "text" || msg.isDeleted) return;
+
+    if (!isWithinEditWindow(msg)) {
+      setShowTimeLimitPopup(true);
+      setTimeout(() => setShowTimeLimitPopup(false), 3500); // auto hide
+      setMessageMenuIndex(null);
+      return;
+    }
+
+    setEditingMessage(msg);
+    setNewMessage(msg.message || "");
+    inputRef.current?.focus();
+    setMessageMenuIndex(null);
+  };
+
+  const handleDeleteMessage = async (msg: ChatMessage) => {
+    setMessageMenuIndex(null);
+
+    if (!isWithinEditWindow(msg)) {
+      setShowTimeLimitPopup(true);
+      setTimeout(() => setShowTimeLimitPopup(false), 3500);
+      return;
+    }
+
+    // Optimistic UI
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.timestamp === msg.timestamp && m.fromHead
+          ? {
+              ...m,
+              isDeleted: true,
+              deletedAt: new Date().toISOString(),
+              message: undefined,
+              file: undefined,
+              caption: undefined,
+            }
+          : m,
+      ),
+    );
+
+    if (socket && connected && projectDetails?.project_id) {
+      socket.emit("deleteHeadMessage", {
+        projectId: projectDetails.project_id,
+        index: msg.id, // important
+        timestamp: msg.timestamp, // important
+      });
+    }
+  };
+
+  const sendEditedMessage = async () => {
+    if (
+      !editingMessage ||
+      !newMessage.trim() ||
+      !socket ||
+      !connected ||
+      !projectDetails?.project_id
+    )
+      return;
+
+    const editedAt = new Date().toISOString();
+
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.timestamp === editingMessage.timestamp && m.fromHead
+          ? { ...m, message: newMessage.trim(), edited: true, editedAt }
+          : m,
+      ),
+    );
+
+    socket.emit("editHeadMessage", {
       projectId: projectDetails.project_id,
-      index: msg.id,               // important
-      timestamp: msg.timestamp,    // important
+      index: editingMessage.id,
+      newData: newMessage.trim(),
+      editedAt,
+      timestamp: editingMessage.timestamp, // ← important
     });
-  }
-};
 
-
-const sendEditedMessage = async () => {
-  if (!editingMessage || !newMessage.trim() || !socket || !connected || !projectDetails?.project_id) return;
-
-  const editedAt = new Date().toISOString();
-
-  setChatMessages((prev) =>
-    prev.map((m) =>
-      m.timestamp === editingMessage.timestamp && m.fromHead
-        ? { ...m, message: newMessage.trim(), edited: true, editedAt }
-        : m
-    )
-  );
-
-  socket.emit("editHeadMessage", {
-    projectId: projectDetails.project_id,
-    index: editingMessage.id,
-    newData: newMessage.trim(),
-    editedAt,
-    timestamp: editingMessage.timestamp, // ← important
-  });
-
-  setEditingMessage(null);
-  setNewMessage("");
-};
+    setEditingMessage(null);
+    setNewMessage("");
+  };
   const handleOpenPreview = (file: File | undefined, msg: ChatMessage) => {
     if (file) {
       setSelectedFile(file);
@@ -2079,7 +2267,7 @@ const sendEditedMessage = async () => {
       return (
         <iframe
           src={`https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(
-            url
+            url,
           )}`}
           title={name}
           className="w-full h-[80vh] border-none"
@@ -2140,7 +2328,7 @@ const sendEditedMessage = async () => {
       });
       if (response) {
         const empIndex = employees.findIndex(
-          (emp) => emp.employeeId === selectedEmployeeForPromote.employeeId
+          (emp) => emp.employeeId === selectedEmployeeForPromote.employeeId,
         );
         if (empIndex !== -1) {
           setEmployees((prev) => prev.filter((_, i) => i !== empIndex));
@@ -2209,8 +2397,8 @@ const sendEditedMessage = async () => {
           isLG
             ? "px-16 py-20 overflow-y-auto min-h-screen justify-center"
             : isXL || is2XL
-            ? "px-24 min-h-screen overflow-y-auto py-20 justify-center"
-            : "px-4 py-26"
+              ? "px-24 min-h-screen overflow-y-auto py-20 justify-center"
+              : "px-4 py-26"
         } items-center relative`}
       >
         <MainNavigation isMenuHide={false} />
@@ -2235,11 +2423,11 @@ const sendEditedMessage = async () => {
             )}
             {isLG || isXL || is2XL ? (
               <div className="flex justify-center">
-    <ProgressTracking
-      progress={progress}
-      // No onStepClick for Head (view-only)
-    />
-  </div>
+                <ProgressTracking
+                  progress={progress}
+                  // No onStepClick for Head (view-only)
+                />
+              </div>
             ) : null}
           </div>
           <div className=" flex md:gap-y-0 gap-y-10 md:flex-row flex-col w-full gap-x-15">
@@ -2266,14 +2454,14 @@ const sendEditedMessage = async () => {
                   <div className={`${is2XL ? "text-sm" : "text-xs"}`}>
                     Submission Date:{" "}
                     <span>
-  {new Date(
-    projectDetails?.deadline || item?.deadline || ""
-  ).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  })}
-</span>
+                      {new Date(
+                        projectDetails?.deadline || item?.deadline || "",
+                      ).toLocaleDateString("en-GB", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })}
+                    </span>
                   </div>
                   <div className={`mt-2 ${is2XL ? "text-sm" : "text-xs"}`}>
                     Budget:{" "}
@@ -2333,7 +2521,6 @@ const sendEditedMessage = async () => {
                           return (
                             initialDesc && (
                               <div className="max-h-80 overflow-hidden">
-                                
                                 {/* Sticky Header */}
                                 <div className="sticky top-0 z-10 bg-white">
                                   <div className="w-fit bg-[#5663E3] skew-x-[-15deg] border-l-4 mb-1 border-cyan-300">
@@ -2342,7 +2529,7 @@ const sendEditedMessage = async () => {
                                     </div>
                                   </div>
                                 </div>
-                              
+
                                 {/* Scrollable Content */}
                                 <div
                                   className="overflow-y-auto max-h-[calc(20rem-40px)] pr-2
@@ -2399,7 +2586,9 @@ const sendEditedMessage = async () => {
                             <RiTimeLine size={15} color="#FF0A78" />
                             <span className="font-semibold text-gray-800">
                               {new Date(
-                                projectDetails?.deadline || item?.deadline || ""
+                                projectDetails?.deadline ||
+                                  item?.deadline ||
+                                  "",
                               ).toLocaleDateString("en-GB")}
                             </span>
                           </div>
@@ -2416,7 +2605,7 @@ const sendEditedMessage = async () => {
   md:w-1/2 w-full md:min-h-[400px] min-h-[300px]
   md:max-h-[650px] max-h-[550px]
   flex flex-col items-center justify-between pb-10
-  ${isCompleted ? 'bg-[#dddddd]' : `${isChatDisabled ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}`}
+  ${isCompleted ? "bg-[#dddddd]" : `${isChatDisabled ? "bg-[#dddddd]" : "bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]"}`}
   ring-1 ring-inset ring-cyan-100/50
   text-slate-500
   shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)]
@@ -2428,12 +2617,13 @@ const sendEditedMessage = async () => {
                 <div
                   className="flex items-center w-fit rounded-md justify-center text-white"
                   style={{
-    background: isCompleted || isChatDisabled
-      ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
-      : currentTab === "chat"
-      ? "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
-      : "conic-gradient(from 0deg at 49.56% 50%, #011B40 0deg, #0348A6 360deg)",
-  }}
+                    background:
+                      isCompleted || isChatDisabled
+                        ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
+                        : currentTab === "chat"
+                          ? "conic-gradient(from 0deg at 49.56% 50%, #0348A6 0deg, #011B40 360deg)"
+                          : "conic-gradient(from 0deg at 49.56% 50%, #011B40 0deg, #0348A6 360deg)",
+                  }}
                 >
                   <div
                     className={`flex ${
@@ -2517,10 +2707,10 @@ const sendEditedMessage = async () => {
                                       ? projectDetails?.clientPic ||
                                         item?.clientPic
                                       : msg.fromHead
-                                      ? projectDetails?.headPic ||
-                                        parsedData?.headPic
-                                      : projectDetails?.teamLeaderPic ||
-                                        item?.teamLeaderPic
+                                        ? projectDetails?.headPic ||
+                                          parsedData?.headPic
+                                        : projectDetails?.teamLeaderPic ||
+                                          item?.teamLeaderPic
                                   }`}
                                   alt="Profile"
                                   className="w-full h-full rounded-full border-2 border-blue-500/50"
@@ -2593,14 +2783,14 @@ const sendEditedMessage = async () => {
                                     </div>
                                   )}
                                   {msg.isDeleted ? (
-  <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
-    <MdBlock size={14} />
-    {msg.fromHead 
-      ? "You deleted this message" 
-      : msg.fromTeamLeader 
-        ? "Team Leader deleted this message" 
-        : "This message was deleted"}
-  </div>
+                                    <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+                                      <MdBlock size={14} />
+                                      {msg.fromHead
+                                        ? "You deleted this message"
+                                        : msg.fromTeamLeader
+                                          ? "Team Leader deleted this message"
+                                          : "This message was deleted"}
+                                    </div>
                                   ) : (
                                     <>
                                       {msg.type === "text" && msg.message && (
@@ -2610,123 +2800,175 @@ const sendEditedMessage = async () => {
                                             __html: DOMPurify.sanitize(
                                               highlightMessageText(
                                                 msg.message,
-                                                msg.mention
-                                              )
+                                                msg.mention,
+                                              ),
                                             ),
                                           }}
                                         />
                                       )}
                                     </>
                                   )}
-{msg.type === "file" &&
-  msg.file?.url &&
-  msg.file.name &&
-  !msg.isDeleted && (
-    <div
-      ref={index === msgControl ? divRef : null}
-      onClick={() => setMsgControl(msgControl === index ? null : index)}
-      className="group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985]"
-    >
-      <div className="flex items-center gap-3 px-3 py-2">
-        {(() => {
-          const fileType = msg.file.type;
-          let Icon = FaFileInvoice;
-          let color = "text-slate-600";
-          if (fileType.startsWith("audio/")) {
-            Icon = FaFileAudio;
-            color = "text-orange-500";
-          } else if (fileType.startsWith("image/")) {
-            Icon = FaFileImage;
-            color = "text-emerald-500";
-          } else if (fileType.startsWith("video/")) {
-            Icon = FaFileVideo;
-            color = "text-violet-500";
-          } else if (fileType === "application/pdf") {
-            Icon = FaFilePdf;
-            color = "text-rose-500";
-          } else if (fileType.includes("word")) {
-            Icon = FaFileWord;
-            color = "text-sky-600";
-          } else if (fileType === "application/zip") {
-            Icon = FaFileArchive;
-            color = "text-amber-500";
-          }
-          return (
-            <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}>
-              <Icon size={18} />
-            </div>
-          );
-        })()}
+                                  {msg.type === "file" &&
+                                    msg.file?.url &&
+                                    msg.file.name &&
+                                    !msg.isDeleted && (
+                                      <div
+                                        ref={
+                                          index === msgControl ? divRef : null
+                                        }
+                                        onClick={() =>
+                                          setMsgControl(
+                                            msgControl === index ? null : index,
+                                          )
+                                        }
+                                        className="group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985]"
+                                      >
+                                        <div className="flex items-center gap-3 px-3 py-2">
+                                          {(() => {
+                                            const fileType = msg.file.type || "application/octet-stream";
+                                            let Icon = FaFileInvoice;
+                                            let color = "text-slate-600";
+                                            if (fileType.startsWith("audio/")) {
+                                              Icon = FaFileAudio;
+                                              color = "text-orange-500";
+                                            } else if (
+                                              fileType.startsWith("image/")
+                                            ) {
+                                              Icon = FaFileImage;
+                                              color = "text-emerald-500";
+                                            } else if (
+                                              fileType.startsWith("video/")
+                                            ) {
+                                              Icon = FaFileVideo;
+                                              color = "text-violet-500";
+                                            } else if (
+                                              fileType === "application/pdf"
+                                            ) {
+                                              Icon = FaFilePdf;
+                                              color = "text-rose-500";
+                                            } else if (
+                                              fileType.includes("word")
+                                            ) {
+                                              Icon = FaFileWord;
+                                              color = "text-sky-600";
+                                            } else if (
+                                              fileType === "application/zip"
+                                            ) {
+                                              Icon = FaFileArchive;
+                                              color = "text-amber-500";
+                                            }
+                                            return (
+                                              <div
+                                                className={`flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 ${color}`}
+                                              >
+                                                <Icon size={18} />
+                                              </div>
+                                            );
+                                          })()}
 
-        <div className="flex-1 min-w-0">
-          <p className="truncate text-[13px] font-medium text-slate-800">
-            {msg.file.name}
-          </p>
-          <p className="text-[10px] uppercase tracking-wide text-slate-400">
-            {getReadableFileType(msg.file.type)}
-          </p>
-        </div>
-      </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="truncate text-[13px] font-medium text-slate-800">
+                                              {msg.file.name}
+                                            </p>
+                                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                                              {getReadableFileType(
+                                                msg.file.type || "application/octet-stream",
+                                              )}
+                                            </p>
+                                          </div>
+                                        </div>
 
-      {(() => {
-        const { type, url: rawUrl, name } = msg.file;
-        const url = rawUrl.startsWith("blob:") ? rawUrl : rawUrl;
+                                        {(() => {
+                                          const {
+                                            type = "application/octet-stream",
+                                            url: rawUrl = "",
+                                            name,
+                                          } = msg.file;
+                                          const url = getFileDisplayUrl(rawUrl);
 
-        if (type.startsWith("audio/")) {
-          return (
-            <div className="px-3 pb-2">
-              <audio controls src={url} className="block h-7 w-full opacity-80 hover:opacity-100 m-0 p-0" />
-            </div>
-          );
-        }
-        if (type.startsWith("image/")) {
-          return (
-            <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
-              <img src={url} alt={name} className="aspect-video w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-              {msgControl === index && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-                  <ActionBar msg={msg} index={index} url={url} name={name} />
-                </div>
-              )}
-            </div>
-          );
-        }
-        if (type.startsWith("video/")) {
-  return (
-    <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
-      <video
-        controls
-        src={url}
-        className="block aspect-video w-full object-cover bg-black m-0"
-      />
-      {/* Download / Action bar – same as TeamLeaderProjectInfo */}
-      {msgControl === index && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-          <ActionBar msg={msg} index={index} url={url} name={name} />
-        </div>
-      )}
-    </div>
-  );
-}
-        return (
-          <div className="px-3 pb-2">
-            {msgControl === index && (
-              <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
-                <ActionBar msg={msg} index={index} url={url} name={name} />
-              </div>
-            )}
-          </div>
-        );
-      })()}
+                                          if (type.startsWith("audio/")) {
+                                            return (
+                                              <div className="px-3 pb-2">
+                                                <audio
+                                                  controls
+                                                  src={url}
+                                                  className="block h-7 w-full opacity-80 hover:opacity-100 m-0 p-0"
+                                                />
+                                              </div>
+                                            );
+                                          }
+                                          if (type.startsWith("image/")) {
+                                            return (
+                                              <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
+                                                <img
+                                                  src={url}
+                                                  alt={name}
+                                                  className="aspect-video w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                                  onError={(e) => {
+                                                    // Retry once with absolute URL if a relative path slipped through
+                                                    const el = e.currentTarget;
+                                                    const fixed = getFileDisplayUrl(rawUrl);
+                                                    if (el.src !== fixed) el.src = fixed;
+                                                  }}
+                                                />
+                                                {msgControl === index && (
+                                                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+                                                    <ActionBar
+                                                      msg={msg}
+                                                      index={index}
+                                                      url={url}
+                                                      name={name}
+                                                    />
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          }
+                                          if (type.startsWith("video/")) {
+                                            return (
+                                              <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
+                                                <video
+                                                  controls
+                                                  src={url}
+                                                  className="block aspect-video w-full object-cover bg-black m-0"
+                                                />
+                                                {msgControl === index && (
+                                                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+                                                    <ActionBar
+                                                      msg={msg}
+                                                      index={index}
+                                                      url={url}
+                                                      name={name}
+                                                    />
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          }
+                                          return (
+                                            <div className="px-3 pb-2">
+                                              {msgControl === index && (
+                                                <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
+                                                  <ActionBar
+                                                    msg={msg}
+                                                    index={index}
+                                                    url={url}
+                                                    name={name}
+                                                  />
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
 
-      {/* 🔥 NEW: Caption display (text attached with file) */}
-      {msg.caption && (
-        <div className="px-3 pb-3 text-gray-800 text-[13px] break-words leading-snug border-t border-slate-100 pt-2">
-          {msg.caption}
-        </div>
-      )}
-    </div>
-  )}
+                                        {/* 🔥 NEW: Caption display (text attached with file) */}
+                                        {msg.caption && (
+                                          <div className="px-3 pb-3 text-gray-800 text-[13px] break-words leading-snug border-t border-slate-100 pt-2">
+                                            {msg.caption}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
 
                                   {msg.files &&
                                     msg.files.length > 0 &&
@@ -2758,7 +3000,7 @@ const sendEditedMessage = async () => {
                                               </a>
                                             </div>
                                             <div className="flex justify-between border-t border-gray-200 bg-white/60 px-3 py-2">
-                                              {!msg.isLeft  && !isCompleted && (
+                                              {!msg.isLeft && !isCompleted && (
                                                 <button
                                                   onClick={() =>
                                                     handleDeleteMessage(msg)
@@ -2774,7 +3016,7 @@ const sendEditedMessage = async () => {
                                                     handleOpenPreview(
                                                       {
                                                         url: file.url.startsWith(
-                                                          "blob:"
+                                                          "blob:",
                                                         )
                                                           ? file.url
                                                           : `${serverURL}${file.url}`,
@@ -2783,7 +3025,7 @@ const sendEditedMessage = async () => {
                                                           file.type ||
                                                           "application/octet-stream",
                                                       },
-                                                      msg
+                                                      msg,
                                                     )
                                                   }
                                                   className="text-blue-600 hover:text-blue-800 hover:shadow-[0_0_6px_rgba(0,0,255,0.4)] p-2 rounded-full transition-all"
@@ -2794,11 +3036,11 @@ const sendEditedMessage = async () => {
                                                   onClick={() =>
                                                     handleDownloadFile(
                                                       file.url.startsWith(
-                                                        "blob:"
+                                                        "blob:",
                                                       )
                                                         ? file.url
                                                         : `${serverURL}${file.url}`,
-                                                      file.name
+                                                      file.name,
                                                     )
                                                   }
                                                   className="text-blue-600 hover:text-blue-800 hover:shadow-[0_0_6px_rgba(0,0,255,0.4)] p-2 rounded-full transition-all"
@@ -2826,25 +3068,44 @@ const sendEditedMessage = async () => {
                                       <div
                                         className="cursor-pointer p-0.5 rounded-full hover:bg-gray-200 text-gray-400"
                                         onMouseDown={(e) => e.stopPropagation()}
-                                        onClick={(e) => { e.stopPropagation(); setMessageMenuIndex(messageMenuIndex === index ? null : index); }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setMessageMenuIndex(
+                                            messageMenuIndex === index
+                                              ? null
+                                              : index,
+                                          );
+                                        }}
                                       >
                                         <BsThreeDotsVertical size={13} />
                                       </div>
                                       {messageMenuIndex === index && (
                                         <div
                                           className="absolute bottom-6 right-0 bg-white shadow-xl rounded-xl border border-gray-100 z-50 min-w-[110px] overflow-hidden"
-                                          onMouseDown={(e) => e.stopPropagation()}
+                                          onMouseDown={(e) =>
+                                            e.stopPropagation()
+                                          }
                                         >
                                           {msg.type === "text" && (
                                             <div
-                                              onClick={(e) => { e.stopPropagation(); handleEditMessage(msg); }}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleEditMessage(msg);
+                                              }}
                                               className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 cursor-pointer"
                                             >
-                                              <MdEdit size={15} className="text-blue-500" /> Edit
+                                              <MdEdit
+                                                size={15}
+                                                className="text-blue-500"
+                                              />{" "}
+                                              Edit
                                             </div>
                                           )}
                                           <div
-                                            onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg); }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteMessage(msg);
+                                            }}
                                             className="flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 cursor-pointer"
                                           >
                                             <MdDelete size={15} /> Delete
@@ -2857,7 +3118,9 @@ const sendEditedMessage = async () => {
                                     className={`text-xs text-gray-500 mt-1 text-right`}
                                   >
                                     {msg.edited && (
-                                      <span className="text-[10px] text-amber-500 mr-1 italic">edited</span>
+                                      <span className="text-[10px] text-amber-500 mr-1 italic">
+                                        edited
+                                      </span>
                                     )}
                                     {new Date(msg.timestamp).toLocaleTimeString(
                                       "en-IN",
@@ -2865,7 +3128,7 @@ const sendEditedMessage = async () => {
                                         hour: "numeric",
                                         minute: "2-digit",
                                         hour12: true,
-                                      }
+                                      },
                                     )}
                                     {!msg.isLeft && (
                                       <span className="inline-flex items-center">
@@ -2987,27 +3250,50 @@ const sendEditedMessage = async () => {
                       <MdOutlineDoubleArrow className="rotate-90" size={12} />
                     </div>
                   )}
+                  {Object.values(uploadTasks).map((task) => (
+                    <div key={task.id} className="flex justify-end my-2 w-full">
+                      <FileUploadBubble
+                        task={task}
+                        align="right"
+                        onPause={() => uploadManager.pause(task.id)}
+                        onResume={() => uploadManager.resume(task.id)}
+                        onCancel={() => uploadManager.cancel(task.id)}
+                        onRetry={() => uploadManager.retry(task.id)}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="w-[90%]">
-              <MikeSearch
-                value={newMessage}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onSend={handleSendMessage}
-                disabled={isChatDisabled}
-                placeholder="Type your message..."
-                onPreviewHeightChange={handlePreviewHeightChange}
-                inputRef={inputRef}
-                mentionOptions={mentionOptions}
-                onMentionSelect={handleMentionSelect}
-                replyTo={replyToMessage}
-                onCancelReply={() => { setReplyToMessage(null); setEditingMessage(null); setNewMessage(""); }}
-                editingMessage={editingMessage ? { content: editingMessage.message || "" } : null}
-                onCancelEdit={() => { setEditingMessage(null); setNewMessage(""); }}
-                projectId={projectDetails?.project_id}
-              />
-            </div>
+                <MikeSearch
+                  value={newMessage}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  onSend={handleSendMessage}
+                  disabled={isChatDisabled}
+                  placeholder="Type your message..."
+                  onPreviewHeightChange={handlePreviewHeightChange}
+                  inputRef={inputRef}
+                  mentionOptions={mentionOptions}
+                  onMentionSelect={handleMentionSelect}
+                  replyTo={replyToMessage}
+                  onCancelReply={() => {
+                    setReplyToMessage(null);
+                    setEditingMessage(null);
+                    setNewMessage("");
+                  }}
+                  editingMessage={
+                    editingMessage
+                      ? { content: editingMessage.message || "" }
+                      : null
+                  }
+                  onCancelEdit={() => {
+                    setEditingMessage(null);
+                    setNewMessage("");
+                  }}
+                  projectId={projectDetails?.project_id}
+                />
+              </div>
             </div>
             {/* -- */}
           </div>
@@ -3040,11 +3326,11 @@ const sendEditedMessage = async () => {
               </div>
               <div className="p-4 overflow-y-auto h-[calc(100%-4rem)]">
                 <div className="flex justify-center">
-    <ProgressTracking
-      progress={progress}
-      // No onStepClick for Head (view-only)
-    />
-  </div>
+                  <ProgressTracking
+                    progress={progress}
+                    // No onStepClick for Head (view-only)
+                  />
+                </div>
               </div>
               <style>
                 {`
@@ -3083,8 +3369,8 @@ const sendEditedMessage = async () => {
                     is2XL || isXL
                       ? "max-w-[600px]"
                       : isLG
-                      ? "max-w-[500px]"
-                      : "max-w-[80vw]"
+                        ? "max-w-[500px]"
+                        : "max-w-[80vw]"
                   }`}
                 >
                   {(() => {
@@ -3109,29 +3395,29 @@ const sendEditedMessage = async () => {
                                   width: isXS
                                     ? 30
                                     : isSM
-                                    ? 40
-                                    : isMD
-                                    ? 50
-                                    : isLG
-                                    ? 60
-                                    : isXL
-                                    ? 70
-                                    : is2XL
-                                    ? 50
-                                    : 25,
+                                      ? 40
+                                      : isMD
+                                        ? 50
+                                        : isLG
+                                          ? 60
+                                          : isXL
+                                            ? 70
+                                            : is2XL
+                                              ? 50
+                                              : 25,
                                   height: isXS
                                     ? 30
                                     : isSM
-                                    ? 40
-                                    : isMD
-                                    ? 50
-                                    : isLG
-                                    ? 60
-                                    : isXL
-                                    ? 70
-                                    : is2XL
-                                    ? 50
-                                    : 25,
+                                      ? 40
+                                      : isMD
+                                        ? 50
+                                        : isLG
+                                          ? 60
+                                          : isXL
+                                            ? 70
+                                            : is2XL
+                                              ? 50
+                                              : 25,
                                   borderRadius: "50%",
                                   objectFit: "cover",
                                 }}
@@ -3143,16 +3429,16 @@ const sendEditedMessage = async () => {
                                   isXS
                                     ? 25
                                     : isSM
-                                    ? 30
-                                    : isMD
-                                    ? 35
-                                    : isLG
-                                    ? 40
-                                    : isXL
-                                    ? 45
-                                    : is2XL
-                                    ? 50
-                                    : 20
+                                      ? 30
+                                      : isMD
+                                        ? 35
+                                        : isLG
+                                          ? 40
+                                          : isXL
+                                            ? 45
+                                            : is2XL
+                                              ? 50
+                                              : 20
                                 }
                                 color="#9e9e9e"
                               />
@@ -3168,38 +3454,39 @@ const sendEditedMessage = async () => {
                                 : "Employee"}
                             </div>
                           </div>
-                         {!isCompleted && (
-    <div className="absolute top-0 right-0 z-20">
-      <FaEllipsisV
-        size={14}
-        className="text-gray-500 cursor-pointer"
-        onClick={(e) => {
-          e.stopPropagation();
-          setShowEmployeeMenu((prev) =>
-            prev === emp.employeeId
-              ? null
-              : emp.employeeId
-          );
-        }}
-      />
-    </div>
-  )}
-  {showEmployeeMenu === emp.employeeId && !isCompleted && (
-    <div className="employee-menu cursor-pointer absolute top-5 -right-30 bg-white border border-gray-300 rounded-tl-none rounded-md shadow-lg z-50 min-w-[150px]">
-      <div
-        onClick={() => {
-          setSelectedEmployeeForPromote(
-            emp as Employee
-          );
-          setShowEmployeeMenu(null);
-          setShowPromotePopup(true);
-        }}
-        className="block w-full text-left px-4 py-2 text-[12px] text-gray-700 "
-      >
-        Promote to Team Leader
-      </div>
-    </div>
-  )}
+                          {!isCompleted && (
+                            <div className="absolute top-0 right-0 z-20">
+                              <FaEllipsisV
+                                size={14}
+                                className="text-gray-500 cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShowEmployeeMenu((prev) =>
+                                    prev === emp.employeeId
+                                      ? null
+                                      : emp.employeeId,
+                                  );
+                                }}
+                              />
+                            </div>
+                          )}
+                          {showEmployeeMenu === emp.employeeId &&
+                            !isCompleted && (
+                              <div className="employee-menu cursor-pointer absolute top-5 -right-30 bg-white border border-gray-300 rounded-tl-none rounded-md shadow-lg z-50 min-w-[150px]">
+                                <div
+                                  onClick={() => {
+                                    setSelectedEmployeeForPromote(
+                                      emp as Employee,
+                                    );
+                                    setShowEmployeeMenu(null);
+                                    setShowPromotePopup(true);
+                                  }}
+                                  className="block w-full text-left px-4 py-2 text-[12px] text-gray-700 "
+                                >
+                                  Promote to Team Leader
+                                </div>
+                              </div>
+                            )}
                         </div>
                       ))
                     ) : (
@@ -3367,14 +3654,14 @@ const sendEditedMessage = async () => {
         )}
       </div>
       {/* ─── 2-minute edit/delete time-limit popup ─── */}
-{/* Auto-hiding 2-min toast */}
-{showTimeLimitPopup && (
-  <div className="fixed bottom-[85px] left-1/2 -translate-x-1/2 z-[60]">
-    <div className="bg-gray-900/95 text-white text-[11px] font-medium px-4 py-1.5 rounded-full shadow-lg backdrop-blur-sm whitespace-nowrap">
-      ⏰ You can only edit/delete within 2 minutes
-    </div>
-  </div>
-)}
+      {/* Auto-hiding 2-min toast */}
+      {showTimeLimitPopup && (
+        <div className="fixed bottom-[85px] left-1/2 -translate-x-1/2 z-[60]">
+          <div className="bg-gray-900/95 text-white text-[11px] font-medium px-4 py-1.5 rounded-full shadow-lg backdrop-blur-sm whitespace-nowrap">
+            ⏰ You can only edit/delete within 2 minutes
+          </div>
+        </div>
+      )}
     </div>
   );
 };

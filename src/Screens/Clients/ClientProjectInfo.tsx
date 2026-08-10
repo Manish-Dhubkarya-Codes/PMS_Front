@@ -36,6 +36,24 @@ import { useGlobalPush } from "../../hooks/useGlobalPush";
 import { MdBlock, MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply } from "react-icons/md";
 import Button2 from "../../UI_Components/Buttons/Button2";
 import { BsThreeDotsVertical } from "react-icons/bs";
+import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
+import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
+import {
+  buildChatFilePayload,
+  normalizeMimeType,
+} from "../../FileSendUI/chatFileUtils";
+import {
+  appendLocalFileMessage,
+  mergeIncomingChatMessage,
+} from "../../FileSendUI/chatMessageMerge";
+import {
+  dedupeLoadedMessages,
+  isLeftForViewer,
+  resolveRoleFromParsed,
+  roleFlags,
+  type ChatRole,
+} from "../../FileSendUI/chatIdentity";
+import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
 
 interface ChatMessageProps {
   type: "text" | "file";
@@ -55,6 +73,7 @@ interface ChatMessageProps {
     imageUrl?: string;
   } | null;
   tempId?: string;
+  messageId?: string;
   replyTo?: ReplyMessage | null; // Added replyTo
   // New
 
@@ -192,6 +211,30 @@ const isChatDisabled = projectStatus === "Completed" || projectStatus === "Hold"
   const messageRefs = useRef<{ [key: string]: HTMLElement | null }>({});
   const observer = useRef<IntersectionObserver | null>(null);
   const { socket, connected, onEvent } = useSocket();
+
+  const getFileDisplayUrl = (url: string | undefined) =>
+    toAbsoluteFileUrl(url, serverURL);
+
+  const {
+    uploadTasks,
+    addChatFiles,
+    pause: pauseUpload,
+    resume: resumeUpload,
+    cancel: cancelUpload,
+    retry: retryUpload,
+  } = useProjectChatFileUpload({
+    projectId,
+    role: "client",
+    uploaderId: clientId,
+    socket,
+    connected,
+    onLocalMessage: (msg) => {
+      setChatMessages((prev) =>
+        appendLocalFileMessage(prev, msg as ChatMessageProps),
+      );
+    },
+  });
+
   const detectMention = (
     message: string
   ): ChatMessageProps["mention"] | null => {
@@ -803,9 +846,7 @@ console.log("STATUS FROM FETCH →", project.status);
 const parseSection = (
   chats: string[] | undefined,
   audios: string[] | undefined,
-  fromClient: boolean,
-  fromHead: boolean,
-  fromTeamLeader: boolean
+  columnDefault: ChatRole,
 ) => {
   const messages: ChatMessageProps[] = [];
   const max = Math.max(chats?.length || 0, audios?.length || 0);
@@ -816,24 +857,22 @@ const parseSection = (
       let chatStr = chats![i];
       if (typeof chatStr === "string") {
         try {
-          // Handle double-stringified data
           let parsed = JSON.parse(chatStr);
-          if (typeof parsed === "string") {
-            parsed = JSON.parse(parsed); // second parse if double-stringified
-          }
+          if (typeof parsed === "string") parsed = JSON.parse(parsed);
 
           const timestamp = parsed.timestamp || new Date().toISOString();
           const isDeleted = parsed.isDeleted === true;
+          const role = resolveRoleFromParsed(parsed, columnDefault);
+          const flags = roleFlags(role);
 
           const msg: ChatMessageProps = {
             type: parsed.type === "text" ? "text" : "file",
-            isLeft: !fromClient,
-            fromClient,
-            fromHead,
-            fromTeamLeader,
+            isLeft: isLeftForViewer("client", role),
+            ...flags,
             timestamp,
             seen_by: parsed.seen_by || [],
             id: i,
+            messageId: parsed.messageId,
             mention: parsed.mention || null,
             replyTo: parsed.replyTo || null,
             isDeleted,
@@ -847,11 +886,7 @@ const parseSection = (
             if (parsed.type === "text") {
               msg.message = parsed.data;
             } else if (parsed.data?.name && parsed.data?.url) {
-              msg.file = {
-                name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
-                type: parsed.data.type,
-              };
+              msg.file = buildChatFilePayload(parsed.data).file;
             }
           }
           messages.push(msg);
@@ -861,7 +896,7 @@ const parseSection = (
       }
     }
 
-    // === AUDIOS (same defensive parsing) ===
+    // === AUDIOS / FILES ===
     if (i < (audios?.length || 0)) {
       let audioStr = audios![i];
       if (typeof audioStr === "string") {
@@ -871,16 +906,17 @@ const parseSection = (
 
           const timestamp = parsed.timestamp || new Date().toISOString();
           const isDeleted = parsed.isDeleted === true;
+          const role = resolveRoleFromParsed(parsed, columnDefault);
+          const flags = roleFlags(role);
 
           const msg: ChatMessageProps = {
             type: "file",
-            isLeft: !fromClient,
-            fromClient,
-            fromHead,
-            fromTeamLeader,
+            isLeft: isLeftForViewer("client", role),
+            ...flags,
             timestamp,
             seen_by: parsed.seen_by || [],
             id: i,
+            messageId: parsed.messageId,
             mention: parsed.mention || null,
             replyTo: parsed.replyTo || null,
             isDeleted,
@@ -888,13 +924,10 @@ const parseSection = (
             edited: parsed.edited || false,
             editedAt: parsed.editedAt,
             caption: parsed.caption,
-            file: !isDeleted && parsed.data?.name && parsed.data?.url
-              ? {
-                  name: parsed.data.name,
-                  url: `${serverURL}${parsed.data.url}`,
-                  type: parsed.data.type,
-                }
-              : undefined,
+            file:
+              !isDeleted && parsed.data?.name && parsed.data?.url
+                ? buildChatFilePayload(parsed.data).file
+                : undefined,
           };
           messages.push(msg);
         } catch (e) {
@@ -909,28 +942,24 @@ const parseSection = (
       const clientMsgs = parseSection(
         project.clientchats,
         project.clientaudios,
-        true,
-        false,
-        false
+        "client",
       );
       const headMsgs = parseSection(
         project.headchats,
         project.headaudios,
-        false,
-        true,
-        false
+        "head",
       );
       const tlMsgs = parseSection(
         project.tlchats,
         project.tlaudios,
-        false,
-        false,
-        true
+        "tl",
       );
 
-      newMessages = [...clientMsgs, ...headMsgs, ...tlMsgs].sort((a, b) =>
-        a.timestamp.localeCompare(b.timestamp)
-      );
+      newMessages = dedupeLoadedMessages([
+        ...clientMsgs,
+        ...headMsgs,
+        ...tlMsgs,
+      ]);
       setChatMessages(newMessages);
       processUpdates(newMessages);
       return project;
@@ -1049,7 +1078,10 @@ const parseSection = (
     } else {
       const projId = initialProjectDetails.ProjectId;
       if (projId) {
-        setCurrentProjectId(projId);
+        // Set both immediately so chunk upload + socket join work
+        // as soon as the client lands from the main project list.
+        setCurrentProjectId(String(projId));
+        setProjectId(String(projId));
       }
     }
   }, []);
@@ -1061,92 +1093,61 @@ const parseSection = (
   useEffect(() => {
     const urlProjectId = searchParams.get("projectId");
     if (!isAdd && !initialProjectDetails?.ProjectId && urlProjectId) {
-      setCurrentProjectId(urlProjectId);
+      setCurrentProjectId(String(urlProjectId));
+      setProjectId(String(urlProjectId));
     }
   }, [searchParams, isAdd, initialProjectDetails]);
   useEffect(() => {
-    if (socket && connected && projectId) {
-      socket.emit("joinProject", projectId);
-    }
-  }, [socket, connected, projectId]);
+    if (!socket || !connected) return;
+    // Prefer loaded projectId; fall back to landing/url id so room join is not delayed
+    const joinId =
+      projectId ||
+      currentProjectId ||
+      initialProjectDetails?.ProjectId ||
+      searchParams.get("projectId");
+    if (!joinId) return;
+    socket.emit("joinProject", joinId);
+    socket.emit("joinClientRoom", clientId);
+  }, [
+    socket,
+    connected,
+    projectId,
+    currentProjectId,
+    initialProjectDetails?.ProjectId,
+    searchParams,
+    clientId,
+  ]);
 
 useEffect(() => {
   if (!socket) return;
 
-  onEvent("newMessage", (data: { fromRole: string; msg: any }) => {
-    const { fromRole, msg: incoming } = data;
+  const onChatEvent = (data: { fromRole: string; msg: any; projectId?: string }) => {
+    if (!data?.msg) return;
+    if (projectId && data.projectId && String(data.projectId) !== String(projectId)) {
+      return;
+    }
+    setChatMessages((prev) =>
+      mergeIncomingChatMessage(prev, data, { ownRole: "client" }),
+    );
+  };
 
-    setChatMessages((prev) => {
-      // 1. Duplicate check
-      const isDuplicate = prev.some(
-        (m) =>
-          m.timestamp === incoming.timestamp &&
-          ((m.type === "text" && m.message === incoming.data) ||
-            (m.type === "file" && m.file?.name === incoming.data?.name))
-      );
-      if (isDuplicate) return prev;
-
-      // 2. Optimistic → real ID upgrade
-      const existingIndex = prev.findIndex((m) => m.tempId === incoming.tempId);
-      if (existingIndex !== -1) {
-        const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          id: incoming.id,
-          caption: updated[existingIndex].caption || incoming.caption || undefined,
-          tempId: undefined,
-        };
-        return updated.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-
-      // 3. Brand new message
-      const fromClient = fromRole === "client";
-      const fromHead = fromRole === "head";
-      const fromTeamLeader = fromRole === "tl";
-
-      // ✅ CRITICAL FIX for Client view
-      const isLeft = fromHead || fromTeamLeader;   // own messages → right side
-
-      const newMsg: ChatMessageProps = {
-        type: incoming.type === "text" ? "text" : "file",
-        isLeft,
-        fromClient,
-        fromHead,
-        fromTeamLeader,
-        timestamp: incoming.timestamp,
-        seen_by: incoming.seen_by || [],
-        id: incoming.id,
-        mention: incoming.mention || null,
-        replyTo: incoming.replyTo
-          ? {
-              id: incoming.replyTo.id,
-              sender: incoming.replyTo.sender,
-              content: incoming.replyTo.content,
-              type: incoming.replyTo.type,
-              timestamp: incoming.replyTo.timestamp,
-            }
-          : null,
-        caption: incoming.caption || undefined,
-      };
-
-      if (incoming.type === "text") {
-        newMsg.message = incoming.data;
-      } else {
-        newMsg.file = {
-          name: incoming.data.name,
-          url: `${serverURL}${incoming.data.url}`,
-          type: incoming.data.type,
-        };
-      }
-
-      return [...prev, newMsg].sort((a, b) =>
-        a.timestamp.localeCompare(b.timestamp)
-      );
-    });
-
-    playNotification();
+  // Others' messages
+  const offNew = onEvent("newMessage", (data: any) => {
+    onChatEvent(data);
+    const fromRole = data?.fromRole || data?.msg?.fromRole;
+    if (fromRole && fromRole !== "client") playNotification();
   });
-}, [socket, playNotification, onEvent]);
+
+  // Our own upload/text: upgrade tempId only (never append a second bubble)
+  const offAck = onEvent("messageAck", (data: any) => {
+    onChatEvent(data);
+  });
+
+  return () => {
+    offNew?.();
+    offAck?.();
+  };
+}, [socket, playNotification, onEvent, projectId]);
 
 // === FINAL: Live edit/delete for Client + Head + TL (All in one clean block) ===
 useEffect(() => {
@@ -1372,8 +1373,8 @@ useEffect(() => {
 
   const requiresPreview = (msg: ChatMessageProps) => {
     if (msg.type === "text") return false;
-    if (!msg.file?.type) return false;
-    const ft = msg.file.type;
+    if (!msg.file) return false;
+    const ft = normalizeMimeType(msg.file.type, msg.file.name);
     if (ft.startsWith("audio/") || ft.startsWith("video/")) return false;
     return true;
   };
@@ -1382,7 +1383,8 @@ useEffect(() => {
       return;
     }
     let messageType =
-      msg.type === "file" && msg.file?.type.startsWith("audio/")
+      msg.type === "file" &&
+      normalizeMimeType(msg.file?.type, msg.file?.name).startsWith("audio/")
         ? "audio"
         : "chat";
     const fromClient = msg.fromClient;
@@ -1865,58 +1867,39 @@ const handleSendMessage = async (
         }
       } 
       else if (type === "file" && files && files.length > 0) {
-        // ← UPDATED FILE BLOCK (now uses caption from MikeSearch)
-        for (const file of files) {
-          if (file.blob) {
-            const formData = new FormData();
-            formData.append("file", file.blob, file.name);
-            formData.append("projectId", projectId);
-            const uploadResponse = await postData(
-              `clientproject/upload_file`,
-              formData
-            );
-            if (uploadResponse.status) {
-              const url = uploadResponse.data?.fileUrl || "";
-              if (url) {
-                const tempId = uuidv4();
-                const optimisticMsg: ChatMessageProps = {
-                  type: "file",
-                  isLeft: false,
-                  fromClient: true,
-                  fromHead: false,
-                  fromTeamLeader: false,
-                  file: {
-                    name: file.name,
-                    url: `${serverURL}${url}`,
-                    type: file.type,
-                  },
-                  caption: caption || message.trim() || undefined,   // ← Caption support
-                  timestamp,
-                  seen_by: [],
-                  tempId,
-                  mention: null,
-                  replyTo: replyToMessage,
-                };
-                setChatMessages((prev) =>
-                  [...prev, optimisticMsg].sort((a, b) =>
-                    a.timestamp.localeCompare(b.timestamp)
-                  )
-                );
-                socket.emit("sendClientMessage", {
-                  projectId,
-                  type: "file",
-                  msgData: { name: file.name, url, type: file.type },
-                  caption: caption || message.trim() || null,   // ← Send caption to backend
-                  timestamp,
-                  mention: null,
-                  tempId,
-                  replyTo: replyToMessage,
-                });
-                playNotification();
-                setReplyToMessage(null);
-              }
-            }
-          }
+        if (!projectId) {
+          alert("Project is still loading. Please wait a moment and try again.");
+          return;
+        }
+        const fileObjects = files
+          .filter(
+            (
+              file,
+            ): file is {
+              name: string;
+              url: string;
+              type: string;
+              blob: Blob;
+            } => !!file.blob,
+          )
+          .map((file) =>
+            file.blob instanceof File
+              ? file.blob
+              : new File([file.blob], file.name, {
+                  type: normalizeMimeType(
+                    file.type || file.blob.type,
+                    file.name,
+                  ),
+                }),
+          );
+
+        if (fileObjects.length > 0) {
+          addChatFiles(fileObjects, {
+            caption: caption || message.trim(),
+            replyTo: replyToMessage || null,
+          });
+          setNewMessage("");
+          setReplyToMessage(null);
         }
       }
 
@@ -2636,7 +2619,7 @@ const handleSendMessage = async (
   >
     <div className="flex items-center gap-3 px-3 py-2">
       {(() => {
-        const fileType = msg.file.type;
+        const fileType = normalizeMimeType(msg.file?.type, msg.file?.name);
         let Icon = FaFileInvoice;
         let color = "text-slate-600";
         if (fileType.startsWith("audio/")) {
@@ -2670,14 +2653,15 @@ const handleSendMessage = async (
           {msg.file.name}
         </p>
         <p className="text-[10px] uppercase tracking-wide text-slate-400">
-          {getReadableFileType(msg.file.type)}
+          {getReadableFileType(normalizeMimeType(msg.file?.type, msg.file?.name))}
         </p>
       </div>
     </div>
 
     {(() => {
-      const { type, url: rawUrl, name } = msg.file;
-      const url = rawUrl.startsWith("blob:") ? rawUrl : rawUrl;
+      const name = msg.file.name;
+      const type = normalizeMimeType(msg.file?.type, name);
+      const url = getFileDisplayUrl(msg.file.url);
 
       if (type.startsWith("audio/")) {
         return (
@@ -2701,7 +2685,7 @@ const handleSendMessage = async (
       if (type.startsWith("video/")) {
         return (
           <div className="mx-3 mb-2 overflow-hidden rounded-lg border border-slate-100">
-            <video src={url} className="block aspect-video w-full object-cover bg-black m-0" />
+            <video controls src={url} className="block aspect-video w-full object-cover bg-black m-0" />
           </div>
         );
       }
@@ -2903,6 +2887,18 @@ const handleSendMessage = async (
                       <MdOutlineDoubleArrow className="rotate-90" size={12} />
                     </div>
                   )}
+                  {Object.values(uploadTasks).map((task) => (
+                    <div key={task.id} className="flex justify-end my-2 w-full">
+                      <FileUploadBubble
+                        task={task}
+                        align="right"
+                        onPause={() => pauseUpload(task.id)}
+                        onResume={() => resumeUpload(task.id)}
+                        onCancel={() => cancelUpload(task.id)}
+                        onRetry={() => retryUpload(task.id)}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="w-[90%]">

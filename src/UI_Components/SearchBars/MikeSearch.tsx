@@ -90,6 +90,8 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
   restrictionMessage = "Only the assigned Project Monitor can chat here",
 }) => {
 
+  
+
   const effectiveDisabled = disabled || isMonitorRestricted;
   const effectivePlaceholder = isMonitorRestricted
     ? restrictionMessage
@@ -130,12 +132,15 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
   const chunksRef = useRef<BlobPart[]>([]);
   const isCancelRef = useRef(false);
   const autoSendRef = useRef(false);
+  /** Blocks double Enter / double click from firing onSend twice before state clears */
+  const sendLockRef = useRef(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showQuill, setShowQuill] = useState(false);
   const [quillContent, setQuillContent] = useState("");
   const [replyTitle, setReplyTitle] = useState("");
   const [isGeneratingText, setIsGeneratingText] = useState("Generate and Send");
 
+  
   useEffect(() => {
     if (
       previewRef.current &&
@@ -577,41 +582,49 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
     onKeyDown?.(e);
   };
 const handleSend = () => {
-  if (disabled || isSending) return;
+  // Ref guard blocks double-click / Enter spam before React re-renders
+  if (disabled || isSending || sendLockRef.current) return;
+  sendLockRef.current = true;
   setIsSending(true);
 
-  if (isRecording) {
-    autoSendRef.current = true;
-    stopRecording();
-    return;
+  try {
+    if (isRecording) {
+      autoSendRef.current = true;
+      stopRecording();
+      return;
+    }
+
+    const capturedText = value?.trim();
+
+    if (selectedFiles.length && filePreviewUrls.length) {
+      // Snapshot then clear immediately so a second click cannot re-send the same files
+      const filesSnapshot = selectedFiles.slice();
+      const urlsSnapshot = filePreviewUrls.slice();
+      setSelectedFiles([]);
+      setFilePreviewUrls([]);
+      onChange?.({ target: { value: "" } } as React.ChangeEvent<HTMLInputElement>);
+
+      const filesData = filesSnapshot.map((file, index) => ({
+        name: file.name || `file_${index}_${Date.now()}`,
+        url: urlsSnapshot[index],
+        type: file.type || "application/octet-stream",
+        blob: file,
+      }));
+
+      // One call only — parent starts chunked upload
+      onSend?.("", "file", filesData, capturedText || undefined);
+    } else if (audioBlob && audioUrl) {
+      handleSendVoice();
+    } else if (capturedText) {
+      onSend?.(capturedText, "text");
+    }
+  } finally {
+    // Short unlock window; files are already cleared so re-click won't re-upload
+    setTimeout(() => {
+      sendLockRef.current = false;
+      setIsSending(false);
+    }, 600);
   }
-
-  const capturedText = value?.trim();
-
-  if (selectedFiles.length && filePreviewUrls.length) {
-    const filesData = selectedFiles.map((file, index) => ({
-      name: file.name || `file_${index}_${Date.now()}`,
-      url: filePreviewUrls[index],
-      type: file.type || "application/octet-stream",
-      blob: file,
-    }));
-
-    // 🔥 NEW: Send file + optional caption together as ONE message
-    onSend?.("", "file", filesData, capturedText || undefined);
-
-    // Clear files and text
-    setSelectedFiles([]);
-    setFilePreviewUrls([]);
-    onChange?.({ target: { value: "" } } as React.ChangeEvent<HTMLInputElement>);
-  } 
-  else if (audioBlob && audioUrl) {
-    handleSendVoice();
-  } 
-  else if (capturedText) {
-    onSend?.(capturedText, "text");
-  }
-
-  setIsSending(false);
 };
   const filteredMentionOptions = mentionOptions.filter(
     (option) =>
