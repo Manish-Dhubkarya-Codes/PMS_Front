@@ -10,7 +10,7 @@ import {
 import { FaFilePdf, FaFileWord } from "react-icons/fa6";
 import { FiPause, FiPlay, FiX, FiRefreshCw, FiAlertCircle } from "react-icons/fi";
 import UploadProgressRing from "./UploadProgressRing";
-import { UploadTask } from "./upload";
+import type { UploadTask } from "./upload";
 import { normalizeMimeType } from "./chatFileUtils";
 
 function formatBytes(bytes: number) {

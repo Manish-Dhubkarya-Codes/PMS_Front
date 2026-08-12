@@ -35,9 +35,9 @@ export function mergeIncomingChatMessage<T extends Record<string, any>>(
     return "client";
   })();
 
-  const incomingIsFile = incoming.type !== "text" && incoming.type !== undefined
-    ? incoming.type !== "text"
-    : Boolean(incoming.data?.url || incoming.file?.url);
+  // const incomingIsFile = incoming.type !== "text" && incoming.type !== undefined
+  //   ? incoming.type !== "text"
+  //   : Boolean(incoming.data?.url || incoming.file?.url);
   const isFile =
     incoming.type === "file" ||
     (incoming.type !== "text" &&

@@ -141,7 +141,6 @@ const handleDeclineClick = () => {
 {(onRemoveEmployee || isTeamLeader || onRemoveAsTL || onPromoteToTL) && (
   <div className="absolute -top-1 left-25 z-20">
     <div
-      type="button"
       className="
         w-8 h-8
         flex items-center justify-center

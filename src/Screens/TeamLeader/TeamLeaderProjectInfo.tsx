@@ -38,7 +38,7 @@ import notificationSound from "../../assets/CredientialAssets/Chat_Notification_
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
-import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete, MdBlock } from "react-icons/md";
+import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import FileUploadBubble from "../../FileSendUI/FileUploadBubble";

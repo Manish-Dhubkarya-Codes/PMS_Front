@@ -14,7 +14,7 @@ import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingCompone
 import { AuthContext } from "../../Screens/Authentication/AuthContext";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { RiLoader2Fill } from "react-icons/ri";
-import { MdCancel, MdFolderOff } from "react-icons/md";
+import { MdFolderOff } from "react-icons/md";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import Button2 from "../../UI_Components/Buttons/Button2";
 
@@ -403,11 +403,11 @@ useEffect(() => {
       .filter((id) => !completedProjectIds.has(id))
   );
 
-  const pendingIds = new Set(
-    requests
-      .filter((item) => item.status === "pending")
-      .map((item) => '' + item.project_id)
-  );
+  // const pendingIds = new Set(
+  //   requests
+  //     .filter((item) => item.status === "pending")
+  //     .map((item) => '' + item.project_id)
+  // );
 
   setTotalUnreadActive(
     Array.from(activeIds).reduce((sum, id) => {
@@ -1191,39 +1191,39 @@ const filteredItems =
     return <div>Error: {error}</div>;
   }
   /* Helper components for icons (place these outside your render) */
-  const IconAt = () => (
-    <svg
-      className="w-4 h-4 text-blue-600 flex-shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25"
-      />
-    </svg>
-  );
+  // const IconAt = () => (
+  //   <svg
+  //     className="w-4 h-4 text-blue-600 flex-shrink-0"
+  //     xmlns="http://www.w3.org/2000/svg"
+  //     fill="none"
+  //     viewBox="0 0 24 24"
+  //     strokeWidth={1.5}
+  //     stroke="currentColor"
+  //   >
+  //     <path
+  //       strokeLinecap="round"
+  //       strokeLinejoin="round"
+  //       d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25"
+  //     />
+  //   </svg>
+  // );
 
-  const IconChat = () => (
-    <svg
-      className="w-4 h-4 text-gray-600 flex-shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-3.04 8.25-6.75 8.25a9.75 9.75 0 01-6.75-3.032m0 0A9.753 9.753 0 013 12c0-4.556 3.04-8.25 6.75-8.25a9.75 9.75 0 016.75 3.032m0 0A9.753 9.753 0 0121 12z"
-      />
-    </svg>
-  );
+  // const IconChat = () => (
+  //   <svg
+  //     className="w-4 h-4 text-gray-600 flex-shrink-0"
+  //     xmlns="http://www.w3.org/2000/svg"
+  //     fill="none"
+  //     viewBox="0 0 24 24"
+  //     strokeWidth={1.5}
+  //     stroke="currentColor"
+  //   >
+  //     <path
+  //       strokeLinecap="round"
+  //       strokeLinejoin="round"
+  //       d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-3.04 8.25-6.75 8.25a9.75 9.75 0 01-6.75-3.032m0 0A9.753 9.753 0 013 12c0-4.556 3.04-8.25 6.75-8.25a9.75 9.75 0 016.75 3.032m0 0A9.753 9.753 0 0121 12z"
+  //     />
+  //   </svg>
+  // );
 
   const UnreadDots = ({
   showGreen,

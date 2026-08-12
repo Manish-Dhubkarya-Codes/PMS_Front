@@ -12,7 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { getData, postData } from "../../BackendConnections/FetchBackendServices";
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { useSocket } from "../../BackendConnections/useSocket";
-import { MdCancel, MdDoNotTouch } from "react-icons/md";
+import { MdDoNotTouch } from "react-icons/md";
 
 interface ProjectDetailsProps {
   workstream: string;

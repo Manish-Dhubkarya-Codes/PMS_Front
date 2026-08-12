@@ -13,7 +13,7 @@ import { getData, postData } from "../../BackendConnections/FetchBackendServices
 import Navigation1 from "../../UI_Components/Navigations/Navigation1";
 import DeleteConfirm from "../../UI_Components/Pop_Ups/DeleteConfirm";
 import EditConfirm from "../../UI_Components/Pop_Ups/EditConfirm";
-import { MdCancel, MdEdit } from "react-icons/md";
+import { MdEdit } from "react-icons/md";
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { FaCircleCheck, FaRegFolder } from "react-icons/fa6";
 import { IoCloseCircle } from "react-icons/io5";
@@ -814,38 +814,39 @@ const handleDeclineEmployee = async (requestId: string) => {
   const is2XL = width > 1536;
   const tabs = ["All Projects", "Employees", "Verify Employee", "Security Keys"];
   const textSize = is2XL ? "text-[15px]" : "text-[12px]";
-  const IconAt = () => (
-  <svg
-    className="w-4 h-4 text-blue-600 flex-shrink-0"
-    xmlns="http://www.w3.org/2000/svg"
-    fill="none"
-    viewBox="0 0 24 24"
-    strokeWidth={1.5}
-    stroke="currentColor"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25"
-    />
-  </svg>
-);
-const IconChat = () => (
-  <svg
-    className="w-4 h-4 text-gray-600 flex-shrink-0"
-    xmlns="http://www.w3.org/2000/svg"
-    fill="none"
-    viewBox="0 0 24 24"
-    strokeWidth={1.5}
-    stroke="currentColor"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-3.04 8.25-6.75 8.25a9.75 9.75 0 01-6.75-3.032m0 0A9.753 9.753 0 013 12c0-4.556 3.04-8.25 6.75-8.25a9.75 9.75 0 016.75 3.032m0 0A9.753 9.753 0 0121 12z"
-    />
-  </svg>
-);
+ 
+//   const IconAt = () => (
+//   <svg
+//     className="w-4 h-4 text-blue-600 flex-shrink-0"
+//     xmlns="http://www.w3.org/2000/svg"
+//     fill="none"
+//     viewBox="0 0 24 24"
+//     strokeWidth={1.5}
+//     stroke="currentColor"
+//   >
+//     <path
+//       strokeLinecap="round"
+//       strokeLinejoin="round"
+//       d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25"
+//     />
+//   </svg>
+// );
+// const IconChat = () => (
+//   <svg
+//     className="w-4 h-4 text-gray-600 flex-shrink-0"
+//     xmlns="http://www.w3.org/2000/svg"
+//     fill="none"
+//     viewBox="0 0 24 24"
+//     strokeWidth={1.5}
+//     stroke="currentColor"
+//   >
+//     <path
+//       strokeLinecap="round"
+//       strokeLinejoin="round"
+//       d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-3.04 8.25-6.75 8.25a9.75 9.75 0 01-6.75-3.032m0 0A9.753 9.753 0 013 12c0-4.556 3.04-8.25 6.75-8.25a9.75 9.75 0 016.75 3.032m0 0A9.753 9.753 0 0121 12z"
+//     />
+//   </svg>
+// );
   if (loading) {
     return <PageLoadingComponent />;
   }
@@ -949,7 +950,7 @@ const IconChat = () => (
   activeTab === "All Projects" ? (
     currentProjects.length > 0 ? (
       currentProjects.map((item, index) => {
-        const totalUnreadForProject = item.unreadFromClient + item.unreadFromTL;
+        // const totalUnreadForProject = item.unreadFromClient + item.unreadFromTL;
         const status = item.status; // Use fetched status
         const textColor = status === "Completed" ? "text-gray-600" : "text-[#000000]";
         return (
