@@ -79,7 +79,6 @@ const FileUploadBubble: React.FC<Props> = ({
   const isVideo = mime.startsWith("video/");
   const speedLabel = formatSpeed(task.speedBytesPerSec);
   const etaLabel = formatEta(task.etaSeconds);
-  const canToggle = task.status === "uploading" || task.status === "paused" || task.status === "queued";
 
   // ---------- WhatsApp-like media card ----------
   if ((isImage || isVideo) && task.previewUrl) {
@@ -111,12 +110,18 @@ const FileUploadBubble: React.FC<Props> = ({
           <div className="absolute inset-0 flex items-center justify-center bg-black/25">
             <button
               type="button"
-              aria-label={task.status === "uploading" ? "Pause upload" : "Resume upload"}
-              disabled={!canToggle && task.status !== "error"}
+              aria-label={
+                task.status === "uploading"
+                  ? "Pause upload"
+                  : task.status === "paused"
+                    ? "Resume upload"
+                    : "Upload control"
+              }
+              disabled={task.status === "queued" || task.status === "completed"}
               onClick={() => {
                 if (task.status === "uploading") onPause(task.id);
-                else if (task.status === "paused" || task.status === "queued" || task.status === "error")
-                  onResume(task.id);
+                else if (task.status === "paused") onResume(task.id);
+                else if (task.status === "error") onResume(task.id);
               }}
               className="rounded-full bg-black/45 p-1 backdrop-blur-sm transition hover:bg-black/55"
             >
@@ -172,13 +177,35 @@ const FileUploadBubble: React.FC<Props> = ({
       <div className="flex items-center gap-3 px-3 py-2">
         <button
           type="button"
-          aria-label={task.status === "uploading" ? "Pause upload" : "Resume upload"}
-          onClick={() => (task.status === "uploading" ? onPause(task.id) : onResume(task.id))}
-          disabled={task.status === "completed" || task.status === "error"}
+          aria-label={
+            task.status === "uploading"
+              ? "Pause upload"
+              : task.status === "paused" || task.status === "queued"
+                ? "Resume upload"
+                : "Upload control"
+          }
+          onClick={() => {
+            if (task.status === "uploading") onPause(task.id);
+            else if (task.status === "paused") onResume(task.id);
+          }}
+          disabled={
+            task.status === "completed" ||
+            task.status === "error" ||
+            task.status === "queued"
+          }
           className="relative shrink-0"
         >
-          <div className={`flex h-11 w-11 items-center justify-center rounded-lg bg-slate-100 ${color}`}>
-            <UploadProgressRing progress={task.progress} size={44} strokeWidth={3}>
+          <div
+            className={`flex h-11 w-11 items-center justify-center rounded-lg ${
+              task.status === "paused" ? "bg-blue-50 ring-1 ring-blue-200" : "bg-slate-100"
+            } ${color}`}
+          >
+            <UploadProgressRing
+              progress={task.progress}
+              size={44}
+              strokeWidth={3}
+              progressColor={task.status === "paused" ? "#0587F5" : undefined}
+            >
               <RingCenterIcon task={task} fallback={<Icon size={16} />} />
             </UploadProgressRing>
           </div>
@@ -224,7 +251,16 @@ const RingCenterIcon: React.FC<{
   light?: boolean;
 }> = ({ task, fallback, light }) => {
   const cls = light ? "text-white" : "text-slate-700";
-  if (task.status === "paused") return <FiPlay size={16} className={cls} />;
+  // Play is the primary affordance after pause — keep it clearly visible on files too
+  if (task.status === "paused") {
+    return (
+      <FiPlay
+        size={18}
+        className={light ? "text-white" : "text-[#0587F5]"}
+        style={{ marginLeft: 2 }} // optical center for triangle play glyph
+      />
+    );
+  }
   if (task.status === "uploading") return <FiPause size={15} className={cls} />;
   if (task.status === "error") return <FiAlertCircle size={16} className="text-red-400" />;
   if (task.status === "queued")

@@ -276,7 +276,9 @@ const initUpload = async (task: UploadTask): Promise<InitUploadResponse> => {
     const next = Object.values(tasksRef.current).find((t) => t.status === "queued");
     if (!next) return;
     runningCountRef.current += 1;
-    patchTask(next.id, { status: "uploading" });
+    // Notify UI so the bubble flips from "wait"/queued to pause icon
+    const updated = patchTask(next.id, { status: "uploading" });
+    onProgressRef.current?.(updated);
     void runUploadLoop(next.id);
   }, [maxConcurrentFiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -428,6 +430,8 @@ const initUpload = async (task: UploadTask): Promise<InitUploadResponse> => {
         tasksRef.current = next;
         return next;
       });
+      // Mirror new tasks into UI state immediately (parents often keep a separate uploadTasks map)
+      created.forEach((t) => onProgressRef.current?.(t));
       // kick the queue on next tick so state has committed
       setTimeout(() => created.forEach(tryStartQueued), 0);
       return created;
@@ -439,7 +443,10 @@ const initUpload = async (task: UploadTask): Promise<InitUploadResponse> => {
     (id: string) => {
       const task = tasksRef.current[id];
       if (!task || task.status !== "uploading") return;
-      patchTask(id, { status: "paused" });
+      // Must notify UI so the bubble swaps pause → play; without this the parent
+      // uploadTasks map stays on "uploading" and further clicks keep calling pause.
+      const updated = patchTask(id, { status: "paused" });
+      onProgressRef.current?.(updated);
       abortersRef.current[id]?.();
     },
     [patchTask]
@@ -450,11 +457,14 @@ const initUpload = async (task: UploadTask): Promise<InitUploadResponse> => {
       const task = tasksRef.current[id];
       if (!task || (task.status !== "paused" && task.status !== "error")) return;
       if (runningCountRef.current >= maxConcurrentFiles) {
-        patchTask(id, { status: "queued", error: undefined });
+        const updated = patchTask(id, { status: "queued", error: undefined });
+        onProgressRef.current?.(updated);
         return;
       }
       runningCountRef.current += 1;
-      patchTask(id, { status: "uploading", error: undefined });
+      // Notify UI so the bubble swaps play → pause while upload continues
+      const updated = patchTask(id, { status: "uploading", error: undefined });
+      onProgressRef.current?.(updated);
       void runUploadLoop(id);
     },
     [maxConcurrentFiles, patchTask] // eslint-disable-line react-hooks/exhaustive-deps
