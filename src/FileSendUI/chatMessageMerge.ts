@@ -157,6 +157,10 @@ export function mergeIncomingChatMessage<T extends Record<string, any>>(
     mention: incoming.mention || null,
     replyTo: incoming.replyTo || null,
     caption: incoming.caption || undefined,
+    edited: !!incoming.edited,
+    editedAt: incoming.editedAt,
+    isDeleted: !!incoming.isDeleted,
+    deletedAt: incoming.deletedAt,
     // Keep tempId only if still provisional (shouldn't for server msgs)
     tempId: undefined,
   };
@@ -216,6 +220,10 @@ function upgradeAt<T extends Record<string, any>>(
     seen_by: incoming.seen_by || existing.seen_by || [],
     caption: existing.caption || incoming.caption || undefined,
     replyTo: existing.replyTo || incoming.replyTo || null,
+    edited: incoming.edited ?? existing.edited,
+    editedAt: incoming.editedAt || existing.editedAt,
+    isDeleted: incoming.isDeleted ?? existing.isDeleted,
+    deletedAt: incoming.deletedAt || existing.deletedAt,
     tempId: undefined,
     ...(upgradedFile ? { file: upgradedFile } : {}),
     ...(meta.incomingText !== undefined && !meta.isFile

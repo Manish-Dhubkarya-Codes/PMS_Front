@@ -28,8 +28,7 @@ import {
   getData,
 } from "../../BackendConnections/FetchBackendServices";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import useSound from "use-sound";
-import notificationSound from "../../assets/CredientialAssets/Chat_Notification_Sound.mp3";
+import { matchesChatMessage, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 import { Commet } from "react-loading-indicators";
@@ -125,7 +124,12 @@ const TeamLeaderProjectInfoWithEmployee: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [playNotification] = useSound(notificationSound);
+  const playNotification = useCallback(() => {
+    playChatNotificationSound();
+  }, []);
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
   const location = useLocation();
   const { item } = location.state || {};
   const storedUserData = localStorage.getItem("userData");
@@ -625,24 +629,15 @@ useEffect(() => {
 const handleEdited = (data: any) => {
   if (String(data.projectId) !== String(projectDetails?.project_id)) return;
 
-  console.log("✏️ TL received EDIT event:", data);
-
   setChatMessages((prev) =>
     prev.map((m) => {
-      const timeDiff = Math.abs(
-        new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
-      );
-
-      // Prefer timestamp (very tolerant) — ignore id completely
-      if (timeDiff < 10000) {
-        return {
-          ...m,
-          message: data.newData,
-          edited: true,
-          editedAt: data.editedAt || new Date().toISOString(),
-        };
-      }
-      return m;
+      if (!matchesChatMessage(m, data)) return m;
+      return {
+        ...m,
+        message: data.newData ?? data.newText ?? m.message,
+        edited: true,
+        editedAt: data.editedAt || new Date().toISOString(),
+      };
     })
   );
 };
@@ -650,24 +645,16 @@ const handleEdited = (data: any) => {
 const handleDeleted = (data: any) => {
   if (String(data.projectId) !== String(projectDetails?.project_id)) return;
 
-  console.log("🗑️ TL received DELETE event:", data);
-
   setChatMessages((prev) =>
     prev.map((m) => {
-      const timeDiff = Math.abs(
-        new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
-      );
-
-      if (timeDiff < 10000) {
-        return {
-          ...m,
-          isDeleted: true,
-          deletedAt: data.deletedAt || new Date().toISOString(),
-          message: undefined,
-          file: undefined,
-        };
-      }
-      return m;
+      if (!matchesChatMessage(m, data)) return m;
+      return {
+        ...m,
+        isDeleted: true,
+        deletedAt: data.deletedAt || new Date().toISOString(),
+        message: undefined,
+        file: undefined,
+      };
     })
   );
 };
@@ -1819,7 +1806,10 @@ const getSenderInfo = (msg: ChatMessage) =>
               );
             } else if (fileType.startsWith("video/")) {
               return <div className="px-0 py-0 border-t border-gray-200"><video controls src={url} className="w-full max-h-[100px] object-contain" /></div>;
-            } else if (["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)) {
+            } else if (
+              ["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)
+              || (name || "").toLowerCase().endsWith(".zip")
+            ) {
               return <div className="px-3 flex items-center justify-center">{msgControl === index && <ActionBar msg={msg} index={index} url={url} name={name} />}</div>;
             }
             return null;

@@ -6,11 +6,23 @@ export function normalizeMimeType(
   type: string | null | undefined,
   fileName?: string | null,
 ): string {
-  if (type && typeof type === "string" && type.trim()) {
-    return type.trim();
+  const raw = type && typeof type === "string" ? type.trim() : "";
+  const name = (fileName || "").toLowerCase();
+  const isRecording = /^recording_/i.test(name);
+  const isGeneric =
+    !raw ||
+    raw === "application/octet-stream" ||
+    raw === "binary/octet-stream";
+
+  // Voice notes are recorded as webm; never treat those as video.
+  if (isRecording && (name.endsWith(".webm") || raw.startsWith("video/"))) {
+    return "audio/webm";
   }
 
-  const name = (fileName || "").toLowerCase();
+  if (raw && !isGeneric) {
+    return raw;
+  }
+
   if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)) {
     if (name.endsWith(".png")) return "image/png";
     if (name.endsWith(".gif")) return "image/gif";
@@ -19,15 +31,20 @@ export function normalizeMimeType(
     if (name.endsWith(".svg")) return "image/svg+xml";
     return "image/jpeg";
   }
+  if (
+    /^recording_/i.test(name) ||
+    /\.(mp3|wav|ogg|m4a|aac|mpeg)$/i.test(name)
+  ) {
+    if (name.endsWith(".wav")) return "audio/wav";
+    if (name.endsWith(".ogg")) return "audio/ogg";
+    if (name.endsWith(".webm")) return "audio/webm";
+    if (name.endsWith(".m4a") || name.endsWith(".aac")) return "audio/mp4";
+    return "audio/mpeg";
+  }
   if (/\.(mp4|webm|mov|mkv)$/i.test(name)) {
     if (name.endsWith(".webm")) return "video/webm";
     if (name.endsWith(".mov")) return "video/quicktime";
     return "video/mp4";
-  }
-  if (/\.(mp3|wav|ogg|m4a)$/i.test(name)) {
-    if (name.endsWith(".wav")) return "audio/wav";
-    if (name.endsWith(".ogg")) return "audio/ogg";
-    return "audio/mpeg";
   }
   if (name.endsWith(".pdf")) return "application/pdf";
   if (name.endsWith(".zip")) return "application/zip";
@@ -36,6 +53,19 @@ export function normalizeMimeType(
     return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   }
   return "application/octet-stream";
+}
+
+export function isChatAudioFile(
+  type?: string | null,
+  name?: string | null,
+): boolean {
+  const normalized = normalizeMimeType(type, name);
+  if (normalized.startsWith("audio/")) return true;
+  const n = (name || "").toLowerCase();
+  return (
+    /^recording_/i.test(n) ||
+    /\.(m4a|mp3|wav|ogg|aac|mpeg)$/i.test(n)
+  );
 }
 
 export function buildChatFilePayload(input: {
@@ -113,7 +143,9 @@ export function emitChatFileMessage(options: {
   const payload = {
     projectId,
     fromRole: role,
-    type: "file" as const,
+    type: (isChatAudioFile(msgData.type, msgData.name) ? "audio" : "file") as
+      | "audio"
+      | "file",
     msgData,
     caption: caption || null,
     timestamp,

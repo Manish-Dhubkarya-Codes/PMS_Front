@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import Button1 from "../../UI_Components/Buttons/Button1";
 import Button2 from "../../UI_Components/Buttons/Button2";
@@ -33,12 +33,11 @@ import {
   getData,
 } from "../../BackendConnections/FetchBackendServices";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import useSound from "use-sound";
-import notificationSound from "../../assets/CredientialAssets/Chat_Notification_Sound.mp3";
+import { playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
-import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete } from "react-icons/md";
+import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete, MdBlock } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
@@ -160,7 +159,12 @@ const TeamLeaderProjectInfo: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [playNotification] = useSound(notificationSound);
+  const playNotification = useCallback(() => {
+    playChatNotificationSound();
+  }, []);
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
   const [selectedMention, setSelectedMention] = useState<ChatMessage["mention"] | null>(null);
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -2237,6 +2241,11 @@ useEffect(() => {
                       )}
 
 {/* ==================== SELECTION CHECKBOX + MESSAGE CONTENT ==================== */}
+{msg.isDeleted && (
+  <div className="text-gray-400 italic text-xs flex items-center gap-1 py-1">
+    <MdBlock size={14} /> {msg.isLeft ? "This message was deleted" : "You deleted this message"}
+  </div>
+)}
 {!msg.isDeleted && (
   <div className="relative">
     {/* Checkbox for BOTH text and file messages */}

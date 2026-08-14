@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import Button1 from "../../UI_Components/Buttons/Button1";
 import MainNavigation from "../../UI_Components/Navigations/MainNavigation";
@@ -31,8 +31,7 @@ import {
   getData,
 } from "../../BackendConnections/FetchBackendServices";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import useSound from "use-sound";
-import notificationSound from "../../../src/assets/CredientialAssets/Chat_Notification_Sound.mp3";
+import { isProjectDetailsPdf, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from "uuid";
 import { useSocket } from "../../BackendConnections/useSocket";
 import Button2 from "../../UI_Components/Buttons/Button2";
@@ -295,7 +294,9 @@ const HeadClientProjectInfo: React.FC = () => {
   const divRef = useRef<HTMLDivElement>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [playNotification] = useSound(notificationSound);
+  const playNotification = React.useCallback(() => {
+    playChatNotificationSound();
+  }, []);
   const inputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef<{ [key: string]: HTMLElement | null }>({});
   const observer = useRef<IntersectionObserver | null>(null);
@@ -306,6 +307,17 @@ const HeadClientProjectInfo: React.FC = () => {
     useState<Employee | null>(null);
   const [securityKeyInput, setSecurityKeyInput] = useState("");
   const { socket, connected, onEvent, emitEvent } = useSocket();
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
+  const projectDetailsPdf = useMemo(() => {
+    return chatMessages.find(
+      (m) =>
+        m.type === "file" &&
+        !m.isDeleted &&
+        isProjectDetailsPdf(m.file?.name, m.file?.type),
+    );
+  }, [chatMessages]);
   // ========== TEMPORARY SOCKET DEBUG ==========
   useEffect(() => {
     console.log("🔌 Socket Debug:", {
@@ -1858,6 +1870,7 @@ const HeadClientProjectInfo: React.FC = () => {
           tempId,
           replyTo: currentReplyTo,
         });
+        playNotification();
 
         setNewMessage("");
         setReplyToMessage(null);
@@ -1916,6 +1929,7 @@ const HeadClientProjectInfo: React.FC = () => {
               tempId,
               replyTo: currentReplyTo,
             });
+            playNotification();
 
             setReplyToMessage(null);
           }
@@ -2002,6 +2016,7 @@ const HeadClientProjectInfo: React.FC = () => {
             tempId,
             replyTo: currentReplyTo,
           });
+          playNotification();
         }
 
         setReplyToMessage(null);
@@ -2550,6 +2565,50 @@ const HeadClientProjectInfo: React.FC = () => {
                           );
                         })()}
 
+                        {projectDetailsPdf?.file && (
+                          <div className="w-full mb-4 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2 text-indigo-700 font-semibold text-sm">
+                                <FaFilePdf />
+                                Project Details PDF
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleDownloadFile(
+                                    getFileDisplayUrl(projectDetailsPdf.file!.url),
+                                    projectDetailsPdf.file!.name,
+                                  )
+                                }
+                                className="flex items-center gap-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-full"
+                              >
+                                <FiDownload size={12} />
+                                Download
+                              </button>
+                            </div>
+                            <iframe
+                              src={getFileDisplayUrl(projectDetailsPdf.file.url)}
+                              title={projectDetailsPdf.file.name}
+                              className="w-full h-[220px] rounded-lg border border-indigo-100 bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenPreview(
+                                  {
+                                    url: getFileDisplayUrl(projectDetailsPdf.file!.url),
+                                    name: projectDetailsPdf.file!.name,
+                                    type: projectDetailsPdf.file!.type || "application/pdf",
+                                  },
+                                  projectDetailsPdf,
+                                )
+                              }
+                              className="mt-2 text-xs text-indigo-600 hover:underline"
+                            >
+                              Open full preview
+                            </button>
+                          </div>
+                        )}
                         {(() => {
                           return (
                             <div className="max-h-[200px] mb-4 overflow-y-auto thin-scroll">

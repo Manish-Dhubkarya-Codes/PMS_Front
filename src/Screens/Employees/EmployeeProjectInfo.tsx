@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import Button1 from "../../UI_Components/Buttons/Button1";
 import Button2 from "../../UI_Components/Buttons/Button2";
@@ -9,8 +9,7 @@ import { FaInfoCircle, FaFileAudio, FaFileImage, FaFileInvoice, FaFileVideo, FaR
 import { FiDownload, FiX, FiZoomIn } from "react-icons/fi";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
 import DOMPurify from "dompurify";
-import useSound from "use-sound";
-import notificationSound from "../../assets/CredientialAssets/Chat_Notification_Sound.mp3";
+import { matchesChatMessage, playChatNotificationSound, sameChatTimestamp, unlockChatNotificationSound } from "../../utils/chatLive";
 import UserIcon from "../../assets/CredientialAssets/UserLogo.png";
 import { Commet } from "react-loading-indicators";
 import { v4 as uuidv4 } from 'uuid';
@@ -25,7 +24,8 @@ import {
   formatMonitorSenderLabel,
   mergeMonitorChatMessage,
 } from "../../FileSendUI/monitorChatMerge";
-import { normalizeMimeType } from "../../FileSendUI/chatFileUtils";
+import { buildChatFilePayload, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
+import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -109,7 +109,9 @@ const [isRequesting, setIsRequesting] = useState(false);  // ← for Request but
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [msgControl, setMsgControl] = useState<number | null>(null);
-  const [playNotification] = useSound(notificationSound);
+  const playNotification = useCallback(() => {
+    playChatNotificationSound();
+  }, []);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const divRef = useRef<HTMLDivElement>(null);
@@ -123,6 +125,9 @@ const [isRequesting, setIsRequesting] = useState(false);  // ← for Request but
   const employeeData = JSON.parse(userData);
   console.log('test',employeeData)
   const { socket, connected } = useSocket();
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
   const [updatesList, setUpdatesList] = useState<UpdateItem[]>([]);
   const [isUpdatesLoading, setIsUpdatesLoading] = useState(true);
   const [replyToMessage, setReplyToMessage] = useState<ReplyMessage | null>(null);
@@ -410,50 +415,34 @@ useEffect(() => {
 const handleEdited = (data: any) => {
   if (String(data.projectId) !== String(item?.project_id)) return;
 
-  console.log("✏️ Employee received EDIT event:", data);
-
   const updateFn = (m: ChatMessage) => {
-    const timeDiff = Math.abs(
-      new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
-    );
-    if (timeDiff < 10000) {
-      return {
-        ...m,
-        message: data.newData,
-        edited: true,
-        editedAt: data.editedAt || new Date().toISOString(),
-      };
-    }
-    return m;
+    if (!matchesChatMessage(m, data)) return m;
+    return {
+      ...m,
+      message: data.newData ?? data.newText ?? m.message,
+      edited: true,
+      editedAt: data.editedAt || new Date().toISOString(),
+    };
   };
 
   setChatMessages((prev) => prev.map(updateFn));
-  setCombinedMessages((prev) => prev.map(updateFn));
 };
 
 const handleDeleted = (data: any) => {
   if (String(data.projectId) !== String(item?.project_id)) return;
 
-  console.log("🗑️ Employee received DELETE event:", data);
-
   const updateFn = (m: ChatMessage) => {
-    const timeDiff = Math.abs(
-      new Date(m.timestamp).getTime() - new Date(data.timestamp).getTime()
-    );
-    if (timeDiff < 10000) {
-      return {
-        ...m,
-        isDeleted: true,
-        deletedAt: data.deletedAt || new Date().toISOString(),
-        message: undefined,
-        file: undefined,
-      };
-    }
-    return m;
+    if (!matchesChatMessage(m, data)) return m;
+    return {
+      ...m,
+      isDeleted: true,
+      deletedAt: data.deletedAt || new Date().toISOString(),
+      message: undefined,
+      file: undefined,
+    };
   };
 
   setChatMessages((prev) => prev.map(updateFn));
-  setCombinedMessages((prev) => prev.map(updateFn));
 };
 
 // ==================== NEW: Employee Removed ====================
@@ -542,11 +531,13 @@ useEffect(() => {
         if (parsed.type === "text") {
           msg.message = parsed.isDeleted ? undefined : parsed.data;
         } else if (parsed.data) {
-          msg.file = parsed.isDeleted ? undefined : {
-            name: parsed.data.name,
-            url: `${serverURL}${parsed.data.url}`,
-            type: parsed.data.type,
-          };
+          msg.file = parsed.isDeleted
+            ? undefined
+            : buildChatFilePayload({
+                name: parsed.data.name,
+                url: parsed.data.url,
+                type: parsed.data.type,
+              }).file;
         }
 
         allMessages.push(msg);
@@ -563,8 +554,35 @@ useEffect(() => {
 
   allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-  setChatMessages(allMessages);
-  setCombinedMessages(allMessages);
+  setChatMessages((prev) => {
+    const localOnly = prev.filter((local) => {
+      if (!local.tempId && !local.file) return false;
+      return !allMessages.some((serverMsg) => {
+        if (local.tempId && serverMsg.tempId && local.tempId === serverMsg.tempId) return true;
+        if (local.messageId && serverMsg.messageId && local.messageId === serverMsg.messageId) return true;
+        if (
+          local.file?.url &&
+          serverMsg.file?.url &&
+          local.file.url === serverMsg.file.url
+        ) {
+          return true;
+        }
+        if (
+          local.type === "file" &&
+          serverMsg.type === "file" &&
+          local.file?.name &&
+          local.file.name === serverMsg.file?.name &&
+          sameChatTimestamp(local.timestamp, serverMsg.timestamp)
+        ) {
+          return true;
+        }
+        return false;
+      });
+    });
+    return [...allMessages, ...localOnly].sort((a, b) =>
+      String(a.timestamp).localeCompare(String(b.timestamp)),
+    );
+  });
 }, [tlMonitorChats, employeeData.employeeId, employeeData.employeeName]);
 
 
@@ -767,13 +785,13 @@ useEffect(() => {
     if (msg.type === "text") return false;
     if (!msg.file?.type) return false;
     const ft = msg.file.type;
-    if (ft.startsWith("audio/") || ft.startsWith("video/")) return false;
+    if (isChatAudioFile(ft, msg.file?.name) || ft.startsWith("video/")) return false;
     return true;
   };
   const markMessageAsSeen = (msg: ChatMessage) => {
     if (msg.fromClient) return; // Skip marking for client messages
     if (!projectDetails?.project_id || msg.id === undefined || !socket) return;
-    const messageType = msg.type === "file" && msg.file?.type.startsWith("audio/") ? "audio" : "chat";
+    const messageType = msg.type === "file" && isChatAudioFile(msg.file?.type, msg.file?.name) ? "audio" : "chat";
     const fromTL = msg.fromTL;
     const viewer = "monitor";
     socket.emit("markTLMonitorSeen", {
@@ -886,14 +904,27 @@ useEffect(() => {
     files?: { name: string; url: string; type: string; blob?: Blob }[],
     caption?: string,
   ) => {
-    if (!socket || !connected || !projectDetails?.project_id) return;
+    if (editingMessage && type === "text") {
+      sendEditedMessage();
+      return;
+    }
+
+    const projId = projectDetails?.project_id || item?.project_id;
+    if (
+      !(message.trim() || (files && files.length > 0)) ||
+      !projId ||
+      !socket
+    ) {
+      return;
+    }
+
     setSending(true);
     try {
-      const projId = projectDetails.project_id;
       const timestamp = new Date().toISOString();
       const senderId = employeeData?.employeeId || "default_id";
-      const tempId = uuidv4();
+
       if (type === "text" && message.trim()) {
+        const tempId = uuidv4();
         const optimisticMsg: ChatMessage = {
           message,
           isLeft: false,
@@ -902,60 +933,48 @@ useEffect(() => {
           timestamp,
           seen_by: [],
           tempId,
-          replyTo: replyToMessage || null, // NEW
-          // ✅ ADD THESE 3 LINES
-  senderId: employeeData.employeeId,
-  senderName: employeeData.employeeName,
-  senderPic: employeeData.employeePic,
+          replyTo: replyToMessage || null,
+          senderId: employeeData.employeeId,
+          senderName: employeeData.employeeName,
+          senderPic: employeeData.employeePic,
         };
         setChatMessages((prev) => [...prev, optimisticMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
         socket.emit("sendEmployeeMessage", {
           projectId: projId,
+          fromRole: "employee",
           type: "text",
           msgData: message,
           timestamp,
           senderId,
-          senderName: employeeData.employeeName, 
+          senderName: employeeData.employeeName,
+          senderPic: employeeData.employeePic,
           tempId,
           replyTo: replyToMessage || null,
         });
+        playNotification();
         setNewMessage("");
-      } else if (type === "voice" && files && files[0]?.blob) {
-        const file = files[0];
-        const formData = new FormData();
-        formData.append("file", file.blob!, file.name);
-        formData.append("projectId", projId);
-        const uploadResponse = await postData(`clientproject/upload_file`, formData);
-        if (uploadResponse.status) {
-          const url = uploadResponse.data?.fileUrl || "";
-          if (url) {
-            const optimisticMsg: ChatMessage = {
-              file: { name: file.name, url: `${serverURL}${url}`, type: file.type || "audio/mp3" },
-              isLeft: false,
-              fromTL: false,
-              type: "file",
-              timestamp,
-              seen_by: [],
-              tempId,
-              replyTo: replyToMessage || null,
-              // ✅ ADD THESE 3 LINES
-  senderId: employeeData.employeeId,
-  senderName: employeeData.employeeName,
-  senderPic: employeeData.employeePic,
-            };
-            setChatMessages((prev) => [...prev, optimisticMsg].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-            socket.emit("sendEmployeeMessage", {
-              projectId: projId,
-              type: "audio",
-              msgData: { name: file.name, url, type: file.type || "audio/mp3" },
-              timestamp,
-              senderId,
-              senderName: employeeData.employeeName,
-              senderPic: employeeData.employeePic,
-              tempId,
-              replyTo: replyToMessage || null,
-            });
-          }
+        setReplyToMessage(null);
+      } else if (type === "voice") {
+        const file = files?.[0];
+        const blob = file?.blob;
+        if (file && blob) {
+          const mime =
+            normalizeMimeType(file.type || blob.type, file.name) ||
+            "audio/webm";
+          const audioFile =
+            blob instanceof File
+              ? blob
+              : new File(
+                  [blob],
+                  file.name || `recording_${Date.now()}.webm`,
+                  { type: mime },
+                );
+          addChatFiles([audioFile], {
+            replyTo: replyToMessage || null,
+          });
+          playNotification();
+          setReplyToMessage(null);
+          setNewMessage("");
         }
       } else if (type === "file" && files && files.length > 0) {
         const fileObjects = files
@@ -972,6 +991,7 @@ useEffect(() => {
             caption: caption || message.trim() || undefined,
             replyTo: replyToMessage || null,
           });
+          playNotification();
           setReplyToMessage(null);
           setNewMessage("");
         }
@@ -983,7 +1003,8 @@ useEffect(() => {
       setReplyToMessage(null);
     }
   };
-  const getReadableFileType = (type?: string) => {
+  const getReadableFileType = (type?: string, name?: string) => {
+    if (isChatAudioFile(type, name)) return "AUDIO";
     if (!type) return "FILE";
     if (type === "application/pdf") return "PDF";
     if (
@@ -992,7 +1013,6 @@ useEffect(() => {
     )
       return "DOC";
     if (type === "application/zip") return "ZIP";
-    if (type.startsWith("audio/")) return "AUDIO";
     if (type.startsWith("video/")) return "VIDEO";
     if (type.startsWith("image/")) return "IMAGE";
     return "FILE";
@@ -1028,10 +1048,10 @@ useEffect(() => {
     const { type, url, name } = file;
     if (type.startsWith("image/")) {
       return <img src={url} alt={name} className="max-w-full max-h-[80vh] object-contain" />;
+    } else if (isChatAudioFile(type, name)) {
+      return <audio controls src={url} className="w-full" />;
     } else if (type.startsWith("video/")) {
       return <video controls src={url} className="max-w-full max-h-[80vh]" />;
-    } else if (type.startsWith("audio/")) {
-      return <audio controls src={url} className="w-full" />;
     } else if (type === "text/html") {
       return <iframe src={url} title={name} className="w-full h-[80vh] border-none" />;
     } else if (type === "application/pdf") {
@@ -1322,12 +1342,12 @@ const getSenderInfo = (msg: ChatMessage) =>
             </div>
             </div>
             {showChat ? (
-  <div className={`w-[50%] md:min-h-[400px] min-h-[300px] md:max-h-[650px] max-h-[550px] flex flex-col items-center justify-between pb-4
+  <div className={`md:w-1/2 w-full md:min-h-[400px] min-h-[300px] md:max-h-[650px] max-h-[550px] flex flex-col items-center justify-between pb-10
       ${isCompleted || isChatDisabled ? 'bg-[#dddddd]' : 'bg-gradient-to-t from-[#f0f9fd] to-[#CFE3FF]'}
       ring-1 ring-inset ring-cyan-100/50 text-slate-500 shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1)] shadow-[#8A8A8A] rounded-[10px]`}>
       <div className="w-full relative items-center md:h-[600px] h-[500px] md:max-h-[600px] max-h-[500px] justify-start flex flex-col">
         <div
-          className="flex items-center w-fit rounded-md justify-center text-white"
+          className="flex items-center w-fit shrink-0 rounded-md justify-center text-white"
           style={{
    background: isChatDisabled
   ? "conic-gradient(from 0deg at 49.56% 50%, #474747 0deg, #9A9A9A 360deg)"
@@ -1357,7 +1377,7 @@ const getSenderInfo = (msg: ChatMessage) =>
                   </div>
 <div
   ref={chatContainerRef}
-  className={`w-full px-4 rounded-md ${is2XL ? "text-sm" : "text-xs"} overflow-y-auto thin-scroll space-y-2`}
+  className={`w-full flex-1 min-h-0 px-4 rounded-md ${is2XL ? "text-sm" : "text-xs"} overflow-y-auto thin-scroll space-y-2`}
   style={{
     paddingTop: "16px",
     paddingBottom: previewHeight > 0 ? previewHeight + 20 : 30,
@@ -1520,21 +1540,22 @@ const getSenderInfo = (msg: ChatMessage) =>
             onClick={() =>
               setMsgControl(msgControl === index ? null : index)
             }
-            className="
-              group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden
+            className={`
+              group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer
+              ${isChatAudioFile(msg.file.type, msg.file.name) ? "overflow-visible" : "overflow-hidden"}
               rounded-xl border border-slate-200 bg-white
               transition-all duration-300 ease-out
               hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)]
               active:scale-[0.985]
-            "
+            `}
           >
             <div className="flex items-center gap-3 px-3 py-2">
               {(() => {
-                const fileType = msg.file.type;
+                const fileType = normalizeMimeType(msg.file.type, msg.file.name);
                 let Icon = FaFileInvoice;
                 let color = "text-slate-600";
 
-                if (fileType.startsWith("audio/")) {
+                if (isChatAudioFile(fileType, msg.file.name)) {
                   Icon = FaFileAudio;
                   color = "text-orange-500";
                 } else if (fileType.startsWith("image/")) {
@@ -1574,19 +1595,23 @@ const getSenderInfo = (msg: ChatMessage) =>
                   {msg.file.name}
                 </p>
                 <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                  {getReadableFileType(msg.file.type)}
+                  {getReadableFileType(msg.file.type, msg.file.name)}
                 </p>
               </div>
             </div>
 
             {(() => {
-              const fileType = msg.file.type;
-              const url = msg.file.url;
               const name = msg.file.name;
-              if (fileType.startsWith("audio/")) {
+              const fileType = normalizeMimeType(msg.file.type, name);
+              const url = toAbsoluteFileUrl(msg.file.url, serverURL) || msg.file.url;
+              if (isChatAudioFile(fileType, name)) {
                 return (
-                  <div className="px-3 py-2 border-t border-gray-200">
-                    <audio controls src={url} className="min-w-[150px] max-w-full" />
+                  <div className="px-3 pb-2">
+                    <audio
+                      controls
+                      src={url}
+                      className="block h-7 w-full opacity-80 hover:opacity-100 m-0 p-0"
+                    />
                   </div>
                 );
               } else if (fileType.startsWith("image/")) {
@@ -1612,6 +1637,7 @@ const getSenderInfo = (msg: ChatMessage) =>
                 );
               } else if (
                 ["text/html", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"].includes(fileType)
+                || (name || "").toLowerCase().endsWith(".zip")
               ) {
                 return (
                   <div className="px-3 flex items-center justify-center">
@@ -1814,24 +1840,31 @@ const getSenderInfo = (msg: ChatMessage) =>
   )}
 </div>
                 </div>
-                <div className="w-[90%]">
+                <div className="w-[90%] relative shrink-0 z-30 overflow-visible">
                 <MikeSearch
   value={newMessage}
   onChange={(e) => setNewMessage(e.target.value)}
-  onSend={(message, type, files, caption) => {
-    if (editingMessage) {
-      sendEditedMessage();
-    } else {
-      handleSendMessage(message, type, files, caption);
-    }
-  }}
-  disabled={!showChat || isChatDisabled}
+  onSend={handleSendMessage}
+  disabled={isChatDisabled}
   placeholder={editingMessage ? "Edit your message..." : "Type your message..."}
   onPreviewHeightChange={setPreviewHeight}
   inputRef={inputRef}
   replyTo={replyToMessage}
-  onCancelReply={() => setReplyToMessage(null)}
-  projectId={projectDetails?.project_id}
+  onCancelReply={() => {
+    setReplyToMessage(null);
+    setEditingMessage(null);
+    setNewMessage("");
+  }}
+  editingMessage={
+    editingMessage
+      ? { content: editingMessage.message || "" }
+      : null
+  }
+  onCancelEdit={() => {
+    setEditingMessage(null);
+    setNewMessage("");
+  }}
+  projectId={projectDetails?.project_id || item?.project_id}
 />
               </div>
               </div>

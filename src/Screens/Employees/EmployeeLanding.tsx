@@ -13,6 +13,7 @@ import { getData, postData } from "../../BackendConnections/FetchBackendServices
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { MdDoNotTouch } from "react-icons/md";
+import { isQuietProjectStatus } from "../../utils/chatLive";
 
 interface ProjectDetailsProps {
   workstream: string;
@@ -207,12 +208,12 @@ const EmployeeLanding: React.FC = () => {
 
   }, [employeeRequests, employeeData, allEmployeeRequests, requestedProjectIds]);
 
-  // Join employee room
+  // Join employee room (global + personal so request updates arrive live)
   useEffect(() => {
     if (connected) {
-      emitEvent('joinEmployeeRoom', null);
+      emitEvent("joinEmployeeRoom", employeeData?.employeeId || null);
     }
-  }, [connected, emitEvent]);
+  }, [connected, emitEvent, employeeData?.employeeId]);
 
   useEffect(() => {
   if (employeeRequests.length > 0) {
@@ -272,10 +273,13 @@ const handleSeen = (data: { projectId?: string; seen_by?: string[] }) => {
   });
 };
 
-  onEvent("newTLMonitorMessage", handleNewTlMessage);
-  onEvent("tlMonitorMessageSeen", handleSeen);
+  const offNew = onEvent("newTLMonitorMessage", handleNewTlMessage);
+  const offSeen = onEvent("tlMonitorMessageSeen", handleSeen);
 
-  return () => {};
+  return () => {
+    offNew?.();
+    offSeen?.();
+  };
 }, [connected, onEvent]);
 
   // Join shared chat rooms for all projects the employee is involved in
@@ -358,25 +362,47 @@ useEffect(() => {
   };
 
   // When project status changes (Hold → Active, Active → Completed, etc.)
-  const handleProjectStatusUpdated = (data: { project_id: string | number; status: string }) => {
+  const handleProjectStatusUpdated = (data: {
+    project_id?: string | number;
+    projectId?: string | number;
+    status: string;
+    active_date?: string | null;
+  }) => {
+    const id = String(data.project_id ?? data.projectId ?? "");
     console.log("🔄 Project status updated", data);
-    setProjectDetails((prev) =>
-      prev.map((project) =>
-        String(project.project_id) === String(data.project_id)
-          ? { ...project, status: data.status }
+    if (!id) {
+      fetchProjectData();
+      return;
+    }
+    setProjectDetails((prev) => {
+      const exists = prev.some((project) => String(project.project_id) === id);
+      if (!exists) {
+        fetchProjectData();
+        return prev;
+      }
+      return prev.map((project) =>
+        String(project.project_id) === id
+          ? { ...project, status: data.status, active_date: data.active_date ?? project.active_date }
           : project
-      )
-    );
-    // Also do a full refresh to be safe
-    fetchProjectData();
+      );
+    });
   };
 
-  const handleNewEmployeeRequest = (newRequest: ProjectRequestProps) => {
-    if (employeeData?.employeeId && String(newRequest.employeeid) === String(employeeData.employeeId)) {
+  const handleNewEmployeeRequest = (newRequest: any) => {
+    const requestEmployeeId = newRequest.employeeid ?? newRequest.employeeId;
+    if (employeeData?.employeeId && String(requestEmployeeId) === String(employeeData.employeeId)) {
       setEmployeeRequests((prev) => {
         if (prev.some((r) => r.request_id === newRequest.request_id)) return prev;
         return [...prev, newRequest];
       });
+    }
+  };
+
+  const handleEmployeeRequestsSnapshot = (payload: { data?: ProjectRequestProps[] }) => {
+    if (Array.isArray(payload?.data)) {
+      setEmployeeRequests(payload.data);
+    } else {
+      fetchEmployeeRequests();
     }
   };
 
@@ -398,16 +424,20 @@ const handleRequestStatusUpdate = (data: { request_id: number; status: string })
   }
 };
 
-  onEvent("newProjectCreated", handleNewProject);
-  onEvent("newProjectActivated", handleNewProject);
-  onEvent("projectStatusUpdated", handleProjectStatusUpdated);
-  onEvent("newEmployeeRequest", handleNewEmployeeRequest);
-  onEvent("employeeRequestStatusUpdate", handleRequestStatusUpdate);
+  const offs = [
+    onEvent("newProjectCreated", handleNewProject),
+    onEvent("newProjectActivated", handleNewProject),
+    onEvent("projectStatusUpdated", handleProjectStatusUpdated),
+    onEvent("projectStatusUpdate", handleProjectStatusUpdated),
+    onEvent("newEmployeeRequest", handleNewEmployeeRequest),
+    onEvent("employeeRequestStatusUpdate", handleRequestStatusUpdate),
+    onEvent("employeeRequestsUpdate", handleEmployeeRequestsSnapshot),
+  ];
 
   return () => {
-    // cleanup if your useSocket supports it
+    offs.forEach((off) => off?.());
   };
-}, [connected, onEvent, employeeData?.employeeId, fetchProjectData, fetchUnreadForRequests]);
+}, [connected, onEvent, employeeData?.employeeId, fetchProjectData, fetchEmployeeRequests, fetchUnreadForRequests]);
 
     // 🔥 FORCE LIVE UPDATE FOR UNREAD COUNT BADGE ON ACCEPTED TAB
 // Only fetch once when the user opens Accepted or Requested tab
@@ -511,7 +541,7 @@ const projectStatusMap = useMemo(() =>
 const acceptedUnreadTotal = useMemo(() => {
   const unreadMsgCount = acceptedProjects.reduce((sum, pid) => {
     const status = projectStatusMap[pid];
-    if (status !== "Completed") {
+    if (!isQuietProjectStatus(status)) {
       return sum + (unreadRequests[pid]?.unreadFromTL || 0);
     }
     return sum;
@@ -523,7 +553,7 @@ const acceptedUnreadTotal = useMemo(() => {
 const requestedUnreadTotal = useMemo(() => 
   requestedProjects.reduce((sum, pid) => {
     const status = projectStatusMap[pid];
-    if (status !== "Completed") {
+    if (!isQuietProjectStatus(status)) {
       return sum + (unreadRequests[pid]?.unreadFromTL || 0);
     }
     return sum;
@@ -777,8 +807,9 @@ onClick={() => {
       </span>
     </div>
 
-    {/* GREEN DOT ONLY */}
+    {/* GREEN DOT ONLY — never for Hold / Completed */}
     {unreadInfoForProject.unreadFromTL > 0 &&
+      !isQuietProjectStatus(projectStatusMap[projectItem.project_id] || (projectItem as any).status) &&
       !dismissedNotifications.has(String(projectItem.project_id)) && (
         <span
           className="relative flex h-3 w-3 cursor-pointer ml-2"

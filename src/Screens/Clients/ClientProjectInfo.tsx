@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FiZoomIn, FiDownload, FiX } from "react-icons/fi";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -12,7 +12,7 @@ import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import MikeSearch from "../../UI_Components/SearchBars/MikeSearch";
 import UserIcon from "../../assets/CredientialAssets/UserLogo.png";
 import QuillEditor from "../TextEditor";
-import notificationSound from "../../assets/CredientialAssets/Chat_Notification_Sound.mp3";
+
 import {
   getData,
   postData,
@@ -29,7 +29,7 @@ import {
 } from "react-icons/fa";
 import DOMPurify from "dompurify";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import useSound from "use-sound";
+import { playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from "uuid";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { useGlobalPush } from "../../hooks/useGlobalPush";
@@ -147,7 +147,12 @@ const isWithinEditWindow = (msg: ChatMessageProps): boolean => {
   const [selectedFiles, setSelectedFiles] = useState<
     { name: string; url: string; type: string; blob?: Blob }[]
   >([]);
-  const [playNotification] = useSound(notificationSound, { volume: 1, preload: true });
+  const playNotification = useCallback(() => {
+    playChatNotificationSound();
+  }, []);
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   // const blobUrlsRef = useRef<Set<string>>(new Set());
   const [previewHeight, setPreviewHeight] = useState<number>(0);
@@ -695,11 +700,6 @@ useEffect(() => {
         <div style="display: table-cell; padding: 10px;">
           <span style="display: block; font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: bold;">Deadline</span>
           <span style="font-size: 14px; color: #ef4444; font-weight: 600;">${data.deadline.split("-").reverse().join("/")}</span>
-        </div>
-        <div style="display: table-cell; padding: 10px;">
-          <span style="display: block; font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: bold;">Budget</span>
-          <span style="font-size: 14px; color: #059669; font-weight: 600;">₹${data.budget || "0"
-      }</span>
         </div>
       </div>
     </div>

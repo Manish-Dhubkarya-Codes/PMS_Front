@@ -132,6 +132,7 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
   const chunksRef = useRef<BlobPart[]>([]);
   const isCancelRef = useRef(false);
   const autoSendRef = useRef(false);
+  const recordingStartLockRef = useRef(false);
   /** Blocks double Enter / double click from firing onSend twice before state clears */
   const sendLockRef = useRef(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -176,22 +177,42 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
     let rafId: number;
     const animate = () => {
       rafId = requestAnimationFrame(animate);
-      if (!analyserRef.current || isPaused) return;
-      analyserRef.current.getByteFrequencyData(dataArrayRef.current!);
-      const bufferLength = analyserRef.current.frequencyBinCount;
-      const newHeights: number[] = [];
+      if (!analyserRef.current || !dataArrayRef.current || isPaused) return;
+      if (audioContextRef.current?.state === "suspended") {
+        void audioContextRef.current.resume();
+      }
       const numBars = 8;
-      const barBinCount = Math.floor(bufferLength / numBars);
-      for (let i = 0; i < numBars; i++) {
-        let barSum = 0;
-        for (let j = 0; j < barBinCount; j++) {
-          const binIndex = i * barBinCount + j;
-          if (binIndex < bufferLength) {
-            barSum += dataArrayRef.current![binIndex];
+      analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+      let energy = 0;
+      for (let i = 0; i < dataArrayRef.current.length; i++) {
+        energy += dataArrayRef.current[i];
+      }
+      const newHeights: number[] = [];
+      if (energy < 16) {
+        analyserRef.current.getByteTimeDomainData(dataArrayRef.current);
+        const slice = Math.floor(dataArrayRef.current.length / numBars) || 1;
+        for (let i = 0; i < numBars; i++) {
+          let peak = 0;
+          for (let j = 0; j < slice; j++) {
+            const sample = dataArrayRef.current[i * slice + j] ?? 128;
+            const amp = Math.abs(sample - 128);
+            if (amp > peak) peak = amp;
           }
+          newHeights[i] = (peak / 128) * 80 + 6;
         }
-        const average = barSum / barBinCount;
-        newHeights[i] = (average / 255) * 80 + 5;
+      } else {
+        const bufferLength = analyserRef.current.frequencyBinCount;
+        const barBinCount = Math.floor(bufferLength / numBars) || 1;
+        for (let i = 0; i < numBars; i++) {
+          let barSum = 0;
+          for (let j = 0; j < barBinCount; j++) {
+            const binIndex = i * barBinCount + j;
+            if (binIndex < bufferLength) {
+              barSum += dataArrayRef.current[binIndex];
+            }
+          }
+          newHeights[i] = (barSum / barBinCount / 255) * 80 + 5;
+        }
       }
       setBarHeights(newHeights);
     };
@@ -219,25 +240,70 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
     const secs = seconds % 60;
     return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
   };
+  const unlockAnalyserContext = async () => {
+    const AC = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return;
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+      audioContextRef.current = new AC();
+    }
+    if (audioContextRef.current.state === "suspended") {
+      await audioContextRef.current.resume();
+    }
+  };
+
+  const connectAnalyser = async (stream: MediaStream) => {
+    await unlockAnalyserContext();
+    if (!audioContextRef.current) return;
+    sourceRef.current?.disconnect();
+    sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
+    analyserRef.current = audioContextRef.current.createAnalyser();
+    analyserRef.current.fftSize = 256;
+    analyserRef.current.smoothingTimeConstant = 0.5;
+    dataArrayRef.current = new Uint8Array(
+      analyserRef.current.frequencyBinCount
+    ) as Uint8Array<ArrayBuffer>;
+    sourceRef.current.connect(analyserRef.current);
+  };
+
   const startRecordingInternal = async () => {
-    if (disabled || selectedFiles.length || audioBlob) return;
+    if (effectiveDisabled || selectedFiles.length || audioBlob) return;
+    if (recordingStartLockRef.current) return;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      return;
+    }
+    recordingStartLockRef.current = true;
     setRecordingTime(0);
     setIsPaused(false);
     setBarHeights(new Array(8).fill(8));
+    setIsRecording(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : "audio/mp4";
-      if (!mimeType) {
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : MediaRecorder.isTypeSupported("audio/mp4")
+            ? "audio/mp4"
+            : "";
+      if (!mimeType && typeof MediaRecorder === "undefined") {
         console.error("No supported audio MIME type found");
         alert(
           "Your browser does not support any compatible audio formats for recording."
         );
+        setIsRecording(false);
+        recordingStartLockRef.current = false;
         return;
       }
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
       isCancelRef.current = false;
@@ -269,7 +335,9 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
           sourceRef.current = null;
           return;
         }
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const blob = new Blob(chunksRef.current, {
+          type: (mimeType || "audio/webm").split(";")[0],
+        });
         chunksRef.current = [];
         if (blob.size === 0) {
           console.error("Audio blob is empty");
@@ -301,11 +369,13 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
           setAudioBlob(blob);
           setAudioUrl(url);
         } else {
+          const cleanType = (mimeType || blob.type || "audio/webm").split(";")[0];
+          const ext = cleanType.includes("mp4") ? "mp4" : "webm";
           onSend?.("", "voice", [
             {
-              name: `recording_${Date.now()}.${mimeType.split("/")[1]}`,
+              name: `recording_${Date.now()}.${ext}`,
               url: url,
-              type: mimeType,
+              type: cleanType,
               blob: blob,
             },
           ]);
@@ -335,17 +405,8 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
         setMicY(0);
         setIsLocked(false);
       };
-      mediaRecorder.start();
-      audioContextRef.current = new (window.AudioContext ||
-        (window as any).webkitAudioContext)();
-      sourceRef.current =
-        audioContextRef.current.createMediaStreamSource(stream);
-      analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 256;
-      dataArrayRef.current = new Uint8Array(
-        analyserRef.current.frequencyBinCount
-      ) as Uint8Array<ArrayBuffer>;
-      sourceRef.current.connect(analyserRef.current);
+      mediaRecorder.start(200);
+      await connectAnalyser(stream);
       setIsRecording(true);
     } catch (err) {
       console.error("Error accessing microphone:", err);
@@ -355,13 +416,23 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
       setIsRecording(false);
       setIsInstantRecording(false);
       setIsHolding(false);
+      setIsLocked(false);
+    } finally {
+      recordingStartLockRef.current = false;
     }
   };
   // New handlers for instant recording
-  const handleMicPress = (e: React.MouseEvent | React.TouchEvent) => {
-    if (disabled || selectedFiles.length || audioBlob) return;
+  const handleMicPress = (e: React.PointerEvent | React.MouseEvent | React.TouchEvent) => {
+    if (effectiveDisabled || selectedFiles.length || audioBlob) return;
     e.preventDefault();
     e.stopPropagation();
+    if ("pointerId" in e && e.currentTarget instanceof HTMLElement) {
+      try {
+        e.currentTarget.setPointerCapture((e as React.PointerEvent).pointerId);
+      } catch {
+        // ignore
+      }
+    }
     setIsHolding(true);
     setIsCanceling(false);
     setIsLocked(false);
@@ -370,18 +441,22 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
     setShowDeleteIcon(false);
     setMicX(0);
     setMicY(0);
-    const pos = "touches" in e ? e.touches[0] : e.nativeEvent;
-    setStartPosition({ x: pos.clientX, y: pos.clientY });
+    const touch = "touches" in e ? e.touches[0] : undefined;
+    setStartPosition({
+      x: touch?.clientX ?? (e as React.PointerEvent).clientX,
+      y: touch?.clientY ?? (e as React.PointerEvent).clientY,
+    });
     // setCurrentPosition({ x: pos.clientX, y: pos.clientY });
     // Start recording immediately
     setIsInstantRecording(true);
-    startRecordingInternal();
+    setIsRecording(true);
+    void startRecordingInternal();
     // Show delete icon after delay
     setTimeout(() => {
       setShowDeleteIcon(true);
     }, 500);
   };
-  const handleMicRelease = (e: React.MouseEvent | React.TouchEvent) => {
+  const handleMicRelease = (e: React.PointerEvent | React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (isInstantRecording) {
@@ -409,14 +484,15 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
     setMicX(0);
     setMicY(0);
   };
-  const handleMicMove = (e: React.MouseEvent | React.TouchEvent) => {
+  const handleMicMove = (e: React.PointerEvent | React.MouseEvent | React.TouchEvent) => {
     if (!isHolding || !isInstantRecording || isLocked) return;
     e.preventDefault();
     e.stopPropagation();
-    const pos = "touches" in e ? e.touches[0] : e.nativeEvent;
-    // setCurrentPosition({ x: pos.clientX, y: pos.clientY });
-    const deltaX = pos.clientX - startPosition.x;
-    const deltaY = pos.clientY - startPosition.y;
+    const touch = "touches" in e ? e.touches[0] : undefined;
+    const clientX = touch?.clientX ?? (e as React.PointerEvent).clientX;
+    const clientY = touch?.clientY ?? (e as React.PointerEvent).clientY;
+    const deltaX = clientX - startPosition.x;
+    const deltaY = clientY - startPosition.y;
     setMicX(deltaX);
     setMicY(deltaY);
     // Hide hints when starting to slide in any direction
@@ -442,8 +518,14 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
     }
   };
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      try {
+        rec.requestData();
+      } catch {
+        // ignore
+      }
+      rec.stop();
     }
   };
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -474,14 +556,13 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
   };
   const handleSendVoice = () => {
     if (!audioBlob || !audioUrl) return;
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm")
-      ? "audio/webm"
-      : "audio/mp4";
+    const cleanType = (audioBlob.type || "audio/webm").split(";")[0];
+    const ext = cleanType.includes("mp4") ? "mp4" : "webm";
     onSend?.("", "voice", [
       {
-        name: `recording_${Date.now()}.${mimeType.split("/")[1]}`,
+        name: `recording_${Date.now()}.${ext}`,
         url: audioUrl,
-        type: mimeType,
+        type: cleanType,
         blob: audioBlob,
       },
     ]);
@@ -583,12 +664,15 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
   };
 const handleSend = () => {
   // Ref guard blocks double-click / Enter spam before React re-renders
-  if (disabled || isSending || sendLockRef.current) return;
+  if (effectiveDisabled || isSending || sendLockRef.current) return;
   sendLockRef.current = true;
   setIsSending(true);
 
   try {
-    if (isRecording) {
+    if (
+      isRecording ||
+      (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive")
+    ) {
       autoSendRef.current = true;
       stopRecording();
       return;
@@ -872,7 +956,7 @@ const handleSend = () => {
             scale: isCanceling ? 0.8 : 1,
           }}
           exit={{ opacity: 0, y: 10 }}
-          className="absolute bottom-6 w-[98%] p-2 rounded-t-sm shadow-xl bg-white/70 backdrop-blur-md border border-white/30 flex flex-col space-y-4 transition-all duration-300"
+          className="absolute bottom-6 z-30 w-[98%] p-2 rounded-t-sm shadow-xl bg-white/70 backdrop-blur-md border border-white/30 flex flex-col space-y-4 transition-all duration-300"
           transition={{ duration: isCanceling ? 0.3 : 0.3 }}
         >
           {/* Reply */}
@@ -1357,14 +1441,16 @@ const handleSend = () => {
                 </>
               )}
               <motion.div
+                data-mic-record="true"
                 className={`rounded-full flex items-center justify-center p-1.5 transition-transform shadow-lg
                   ${
-                    disabled || selectedFiles.length || audioBlob
+                    effectiveDisabled || selectedFiles.length || audioBlob
                       ? "cursor-not-allowed"
                       : "cursor-pointer"
                   }`}
                 style={{
                   background: "linear-gradient(135deg, #7CFF73, #4CE4A1)",
+                  touchAction: "none",
                 }}
                 animate={{
                   scale: isHolding ? 1.1 : 1,
@@ -1376,14 +1462,15 @@ const handleSend = () => {
                   x: { type: "spring", stiffness: 300, damping: 30 },
                   y: { type: "spring", stiffness: 300, damping: 30 },
                 }}
-                onMouseDown={handleMicPress}
-                onMouseUp={handleMicRelease}
-                onMouseMove={handleMicMove}
-                onMouseLeave={handleMicRelease}
-                onTouchStart={handleMicPress}
-                onTouchEnd={handleMicRelease}
-                onTouchMove={handleMicMove}
-                onTouchCancel={handleMicRelease}
+                onPointerDown={handleMicPress}
+                onPointerUp={handleMicRelease}
+                onPointerMove={handleMicMove}
+                onPointerLeave={handleMicRelease}
+                onPointerCancel={handleMicRelease}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
               >
                 <FiMic
                   size={17}

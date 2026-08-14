@@ -19,6 +19,7 @@ import { FaCircleCheck, FaRegFolder } from "react-icons/fa6";
 import { IoCloseCircle } from "react-icons/io5";
 import AllEmployeeList from "../Employees/AllEmployeeList";
 import { useSocket } from "../../BackendConnections/useSocket";
+import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
 interface Project {
   title: string;
@@ -99,7 +100,7 @@ const [activeTab, setActiveTab] = useState<string>(() => {
   // Memoized total unread calculation
 const calculatedTotalUnread = useMemo(() => 
   projectDetails.reduce((sum, p) => {
-    if (p.status !== "Completed") {
+    if (!isQuietProjectStatus(p.status)) {
       return sum + p.unreadFromClient + p.unreadFromTL;
     }
     return sum;
@@ -260,9 +261,12 @@ useEffect(() => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
   const playNotificationSound = () => {
-    const audio = new Audio('https://cdn.pixabay.com/audio/2022/01/18/audio_d3fd80e4d7.mp3');
-    audio.play().catch(err => console.error("Error playing notification sound:", err));
+    playChatNotificationSound();
   };
+
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
   const fetchEmployees = useCallback(async () => {
     try {
       const employeeRegResponse = await getData('employees/fetch_all_registrations');
@@ -397,7 +401,7 @@ const fetchProjects = useCallback(async () => {
       });
       const detailedProjects = (await Promise.all(detailedPromises)).filter(Boolean) as Project[];
       const newTotalUnread = detailedProjects.reduce((sum: number, p: Project) => {
-  if (p.status !== "Completed") {
+  if (!isQuietProjectStatus(p.status)) {
     return sum + p.unreadFromClient + p.unreadFromTL;
   }
   return sum;
@@ -472,11 +476,15 @@ useEffect(() => {
     fetchProjects();
   };
 
-  onEvent('projectStatusUpdate', handleProjectStatusUpdate);
+  const offA = onEvent("projectStatusUpdate", handleProjectStatusUpdate);
+  const offB = onEvent("projectStatusUpdated", handleProjectStatusUpdate);
 
   return () => {
-    if (typeof offEvent === 'function') {
-      offEvent('projectStatusUpdate', handleProjectStatusUpdate);
+    offA?.();
+    offB?.();
+    if (typeof offEvent === "function") {
+      offEvent("projectStatusUpdate", handleProjectStatusUpdate);
+      offEvent("projectStatusUpdated", handleProjectStatusUpdate);
     }
   };
 }, [connected, onEvent, offEvent, fetchProjects]);
@@ -978,6 +986,7 @@ const handleDeclineEmployee = async (requestId: string) => {
               
                 
 {(item.unreadFromClient + item.unreadFromTL > 0) &&
+  !isQuietProjectStatus(item.status) &&
   !dismissedNotifications.has(item.project_id) && (
     <div className="flex items-center justify-center gap-2 ml-3">
       {/* Green = normal unread message */}

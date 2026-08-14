@@ -75,6 +75,17 @@ const logoutAndRedirect = () => {
 // Request interceptor: No manual header attachment (rely on cookies)
 api.interceptors.request.use(
   (config) => {
+    if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+      const headers: any = config.headers;
+      if (headers) {
+        if (typeof headers.delete === "function") {
+          headers.delete("Content-Type");
+        } else {
+          delete headers["Content-Type"];
+          delete headers["content-type"];
+        }
+      }
+    }
     return config;
   },
   (error) => {
@@ -167,13 +178,31 @@ async function refreshAccessToken() {
 const postData = async (url: any, body: any) => {
   try {
     const response = await api.post(`${url}`, body, {
-      withCredentials: true
+      withCredentials: true,
     });
     const data = response.data;
     return data;
   } catch (e) {
     // Let interceptor handle 401
     return null;
+  }
+};
+
+const postFile = async (url: string, formData: FormData) => {
+  try {
+    const response = await fetch(`${serverURL}/${String(url).replace(/^\//, "")}`, {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      return data || { status: false, message: `Upload failed (${response.status})` };
+    }
+    return data;
+  } catch (e) {
+    console.error("postFile error:", e);
+    return { status: false, message: "Upload failed. Please try again." };
   }
 };
 
@@ -192,4 +221,4 @@ const getData = async (url: any) => {
 };
 
 // Export helper for global use (e.g., in App.js or protected components)
-export { serverURL, postData, getData, logoutAndRedirect, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer };
+export { serverURL, postData, postFile, getData, logoutAndRedirect, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer };

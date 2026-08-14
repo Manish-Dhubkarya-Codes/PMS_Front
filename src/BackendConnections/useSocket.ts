@@ -1,75 +1,110 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { useEffect, useState, useRef, useCallback } from "react";
+import { io, Socket } from "socket.io-client";
+import { serverURL } from "./FetchBackendServices";
 
 interface UseSocketReturn {
   socket: Socket | null;
-  emitEvent: (eventName: string, data: any) => void;
+  emitEvent: (eventName: string, data?: any) => void;
   onEvent: (eventName: string, callback: (...args: any[]) => void) => () => void;
-  offEvent: (eventName: string, callback: (...args: any[]) => void) => void;
+  offEvent: (eventName: string, callback?: (...args: any[]) => void) => void;
   connected: boolean;
 }
 
-export const useSocket = (serverUrl = import.meta.env.VITE_API_URL): UseSocketReturn => {
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [connected, setConnected] = useState(false);
-  const callbacksRef = useRef<Map<string, any>>(new Map());
+let sharedSocket: Socket | null = null;
+let sharedUrl = "";
+
+function resolveUrl(serverUrl?: string): string {
+  return (
+    serverUrl ||
+    import.meta.env.VITE_API_URL ||
+    serverURL ||
+    "https://api.cognicodeedutech.com"
+  );
+}
+
+function getSharedSocket(url: string): Socket {
+  if (sharedSocket && sharedUrl === url) return sharedSocket;
+  if (sharedSocket) {
+    sharedSocket.removeAllListeners();
+    sharedSocket.disconnect();
+  }
+  sharedUrl = url;
+  sharedSocket = io(url, {
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 500,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
+    autoConnect: true,
+  });
+  return sharedSocket;
+}
+
+export const useSocket = (
+  serverUrl = import.meta.env.VITE_API_URL,
+): UseSocketReturn => {
+  const url = resolveUrl(serverUrl);
+  const [socket, setSocket] = useState<Socket | null>(() => getSharedSocket(url));
+  const [connected, setConnected] = useState(!!sharedSocket?.connected);
+  const pendingEmits = useRef<Array<{ event: string; data: any }>>([]);
 
   useEffect(() => {
-    const socketInstance = io(serverUrl, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      timeout: 20000,
-    });
+    const instance = getSharedSocket(url);
+    setSocket(instance);
+    setConnected(instance.connected);
 
-    setSocket(socketInstance);
+    const flush = () => {
+      pendingEmits.current.forEach(({ event, data }) => instance.emit(event, data));
+      pendingEmits.current = [];
+    };
 
-    socketInstance.on('connect', () => {
+    const onConnect = () => {
       setConnected(true);
-      console.log('Socket connected', socketInstance.id);
-    });
+      flush();
+    };
+    const onDisconnect = () => setConnected(false);
 
-    socketInstance.on('disconnect', () => {
-      setConnected(false);
-      console.log('Socket disconnected');
-    });
+    instance.on("connect", onConnect);
+    instance.on("disconnect", onDisconnect);
+    if (instance.connected) onConnect();
 
     return () => {
-      socketInstance.disconnect();
-      setSocket(null);
+      instance.off("connect", onConnect);
+      instance.off("disconnect", onDisconnect);
     };
-  }, [serverUrl]);
+  }, [url]);
 
-  const emitEvent = useCallback((eventName: string, data: any) => {
-    if (socket && connected) {
-      socket.emit(eventName, data);
-    }
-  }, [socket, connected]);
-
-  const onEvent = useCallback((eventName: string, callback: (...args: any[]) => void) => {
-    if (!socket) return () => {};
-
-    // Generate unique key once per call for proper tracking
-    const key = `${eventName}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const wrappedCallback = (...args: any[]) => callback(...args);
-    callbacksRef.current.set(key, wrappedCallback);
-
-    socket.on(eventName, wrappedCallback);
-
-    // Return cleanup with captured key
-    return () => {
-      socket.off(eventName, wrappedCallback);
-      callbacksRef.current.delete(key);
-      console.log(`Removed listener for ${eventName} with key ${key}`);
-    };
-  }, [socket]);
-
-  const offEvent = useCallback((eventName: string, callback: (...args: any[]) => void) => {
-    if (socket) {
-      socket.off(eventName, callback);
-      console.log(`Off event: ${eventName}`);
+  const emitEvent = useCallback((eventName: string, data?: any) => {
+    const instance = socket || sharedSocket;
+    if (instance?.connected) {
+      instance.emit(eventName, data);
+    } else {
+      pendingEmits.current.push({ event: eventName, data });
     }
   }, [socket]);
+
+  const onEvent = useCallback(
+    (eventName: string, callback: (...args: any[]) => void) => {
+      const instance = socket || sharedSocket;
+      if (!instance) return () => {};
+      instance.on(eventName, callback);
+      return () => {
+        instance.off(eventName, callback);
+      };
+    },
+    [socket],
+  );
+
+  const offEvent = useCallback(
+    (eventName: string, callback?: (...args: any[]) => void) => {
+      const instance = socket || sharedSocket;
+      if (!instance) return;
+      if (callback) instance.off(eventName, callback);
+      else instance.removeAllListeners(eventName);
+    },
+    [socket],
+  );
 
   return {
     socket,

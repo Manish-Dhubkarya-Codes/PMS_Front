@@ -12,6 +12,7 @@ import { BsArchive } from "react-icons/bs";
 import { FaUser } from "react-icons/fa";
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { useSocket } from "../../BackendConnections/useSocket";
+import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 
 interface Project {
   Title: string;
@@ -62,10 +63,13 @@ const ClientProfile: React.FC = () => {
   }
   const { logout: contextLogout } = authContext;
   // Play notification sound
-  const playNotificationSound = () => {
-    const audio = new Audio('https://cdn.pixabay.com/audio/2022/01/18/audio_d3fd80e4d7.mp3');
-    audio.play().catch(err => console.error("Error playing notification sound:", err));
-  };
+  const playNotificationSound = useCallback(() => {
+    playChatNotificationSound();
+  }, []);
+
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
 
   // Helper function to compute unread counts
 const computeUnread = (projectData: any) => {
@@ -167,7 +171,7 @@ const headChats = getChatArray(projectData.headchats);
     Description: Array.isArray(project.description) ? project.description.join('<br/><br/>') : project.description || '',
     SubmissionDate: project.deadline || "",
     // NEW: Respect backend "status" (e.g., "Completed" from Team Leader updates) — fallback to deadline logic
-    status: project.status === "Completed" ? "Completed" : "On-Going",
+    status: project.status || (project.status === "Completed" ? "Completed" : "On-Going"),
     ProjectId: project.project_id,
     unreadFromHead,
     unreadFromTL,
@@ -188,7 +192,10 @@ const headChats = getChatArray(projectData.headchats);
   };
 
 useEffect(() => {
-  const newTotalUnread = projectDetails.reduce((sum: number, p: Project) => sum + p.unreadFromHead + p.unreadFromTL, 0);
+  const newTotalUnread = projectDetails.reduce((sum: number, p: Project) => {
+    if (isQuietProjectStatus(p.status)) return sum;
+    return sum + p.unreadFromHead + p.unreadFromTL;
+  }, 0);
   setTotalUnread(newTotalUnread);
 
   // NEW: On-Going = total projects MINUS Completed (as requested)
@@ -712,7 +719,8 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
   </span>
 
   {/* GREEN + BLUE DOTS */}
-  {!dismissedNotifications.has(item.ProjectId) && (
+  {!dismissedNotifications.has(item.ProjectId) &&
+    !isQuietProjectStatus(item.status) && (
     <div className="flex items-center gap-1.5 ml-1.5">
       {/* GREEN DOT - New messages */}
       {(item.unreadFromHead + item.unreadFromTL) > 0 && (

@@ -17,6 +17,7 @@ import { RiLoader2Fill } from "react-icons/ri";
 import { MdFolderOff } from "react-icons/md";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import Button2 from "../../UI_Components/Buttons/Button2";
+import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 
 interface ProjectListProps {
   workstream: string;
@@ -100,6 +101,9 @@ const TeamLeaderLanding: React.FC = () => {
   const navigate = useNavigate();
   const prevProjectDetailsRef = useRef<ProjectListProps[]>([]);
   const prevRequestsRef = useRef<RequestProps[]>([]);
+  const projectDetailsRef = useRef<ProjectListProps[]>([]);
+  const requestsRef = useRef<RequestProps[]>([]);
+  const initialLoadRef = useRef(false);
   const [showModal, setShowModal] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ProjectListProps | null>(null);
   // New: Department state
@@ -129,9 +133,7 @@ const TeamLeaderLanding: React.FC = () => {
           }
           return prev;
         });
-        if (error && error.includes("employee")) {
-          setError(null);
-        }
+        setError((prev) => (prev && prev.includes("employee") ? null : prev));
       } else {
         setError(employeeRegResponse.data?.message || "Failed to fetch employee registrations.");
       }
@@ -139,7 +141,7 @@ const TeamLeaderLanding: React.FC = () => {
       setError("Failed to fetch employee registrations. Please try again.");
       console.error("Fetch Employees Error:", err);
     }
-  }, [error]);
+  }, []);
 const [totalPendingVerify, setTotalPendingVerify] = useState<number>(0);
 useEffect(() => {
   setTotalPendingVerify(
@@ -188,29 +190,41 @@ useEffect(() => {
 
     if (department === "Technical") {
       ongoingProjectIds.forEach((projectId) => {
-        emitEvent('joinTlMonitorRoom', projectId);
+        emitEvent("joinTlMonitorRoom", projectId);
+        emitEvent("joinEmployeeChat", projectId);
       });
     }
 
     return () => {
       allProjectIds.forEach((projectId) => {
-        emitEvent('leaveProject', projectId);
+        emitEvent("leaveProject", projectId);
       });
       if (department === "Technical") {
         ongoingProjectIds.forEach((projectId) => {
-          emitEvent('leaveTlMonitorRoom', projectId);
+          emitEvent("leaveTlMonitorRoom", projectId);
         });
       }
     };
   }, [connected, allProjectIds, ongoingProjectIds, emitEvent, department]);
 
+  useEffect(() => {
+    projectDetailsRef.current = projectDetails;
+  }, [projectDetails]);
+  useEffect(() => {
+    requestsRef.current = requests;
+  }, [requests]);
+
   // Fetch projects and unread message info (initial only, updates via socket)
-  const fetchUnreadInfo = useCallback(async () => {
-    const allProjects: ProjectListProps[] = projectDetails;
+  const fetchUnreadInfo = useCallback(async (
+    projectsArg?: ProjectListProps[],
+    requestsArg?: RequestProps[],
+  ) => {
+    const allProjects: ProjectListProps[] = projectsArg || projectDetailsRef.current;
+    const currentRequests: RequestProps[] = requestsArg || requestsRef.current;
     setAllProjectIds(allProjects.map(p => p.project_id));
 
     const ongoingProjects: ProjectWithEmployees[] = Object.values(
-      requests
+      currentRequests
         .filter((item) => item.status === "accepted" || item.status === "TLAssign")
         .reduce((acc: Record<string, ProjectWithEmployees>, item: RequestProps) => {
           if (!acc[item.project_id]) {
@@ -373,7 +387,7 @@ useEffect(() => {
       }
       return prev;
     });
-  }, [requests, projectDetails]);
+  }, []);
 
   // ===== TOTAL UNREAD COUNTS FOR ALL TABS =====
 useEffect(() => {
@@ -409,8 +423,15 @@ useEffect(() => {
   //     .map((item) => '' + item.project_id)
   // );
 
+  const quietIds = new Set(
+    projectDetails
+      .filter((item) => isQuietProjectStatus(item.status))
+      .map((item) => String(item.project_id))
+  );
+
   setTotalUnreadActive(
     Array.from(activeIds).reduce((sum, id) => {
+      if (quietIds.has(String(id))) return sum;
       const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
       return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
     }, 0)
@@ -418,6 +439,7 @@ useEffect(() => {
 
   setTotalUnreadOngoing(
     Array.from(ongoingIds).reduce((sum, id) => {
+      if (quietIds.has(String(id))) return sum;
       const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
       return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
     }, 0)
@@ -425,6 +447,7 @@ useEffect(() => {
 
   setTotalUnreadAssigned(
     Array.from(assignedIds).reduce((sum, id) => {
+      if (quietIds.has(String(id))) return sum;
       const info = unreadInfo[id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0 };
       return sum + info.unreadFromHead + info.unreadFromClient + info.unreadFromMonitor;
     }, 0)
@@ -442,34 +465,41 @@ setTotalUnreadRequests(
       setError(null);
 
       const projectResponse = await getData("clientproject/show_all_clientsprojects");
+      let nextProjects = prevProjectDetailsRef.current;
       if (projectResponse.status) {
         const newData = projectResponse.data || [];
+        nextProjects = newData;
         if (JSON.stringify(prevProjectDetailsRef.current) !== JSON.stringify(newData)) {
           setProjectDetails(newData);
           prevProjectDetailsRef.current = newData;
+          projectDetailsRef.current = newData;
           setAllProjectIds(newData.map((p: any) => p.project_id));
         }
       } else {
         setError(projectResponse.message || "Failed to fetch projects.");
       }
 
+      let nextRequests = prevRequestsRef.current;
       if (department === "Technical") {
         const requestResponse = await getData("clientproject/employee_requests");
         if (requestResponse.status) {
           const newData = requestResponse.data || [];
+          nextRequests = newData;
           if (JSON.stringify(prevRequestsRef.current) !== JSON.stringify(newData)) {
             setRequests(newData);
             prevRequestsRef.current = newData;
+            requestsRef.current = newData;
           }
         } else {
           setError(requestResponse.message || "Failed to fetch requests.");
         }
+        await fetchUnreadInfo(nextProjects, nextRequests);
       }
     } catch (err: any) {
       setError(err.message || "Failed to fetch data. Please try again.");
       console.error("Fetch Error:", err);
     }
-  }, [department]);
+  }, [department, fetchUnreadInfo]);
 
   const fetchProjects = useCallback(async () => {
   const projectResponse = await getData("clientproject/show_all_clientsprojects");
@@ -489,16 +519,13 @@ useEffect(() => {
 
   const handleNewProject = (data?: any) => {
     console.log("🆕 New project created – refreshing list", data);
-    fetchProjects();          // Refresh the full list
+    fetchProjectsAndRequests();
+    fetchProjects();
   };
 
-  onEvent("newProjectCreated", handleNewProject);
-
-  return () => {
-    // If your useSocket has offEvent, use it:
-    // offEvent("newProjectCreated", handleNewProject);
-  };
-}, [connected, onEvent, fetchProjects]);
+  const off = onEvent("newProjectCreated", handleNewProject);
+  return () => off?.();
+}, [connected, onEvent, fetchProjects, fetchProjectsAndRequests]);
 
 // Join global room so Sales TL receives new projects
 useEffect(() => {
@@ -509,18 +536,25 @@ useEffect(() => {
   }
 }, [connected, emitEvent]);
 
-  // Initial fetch
+  // Initial fetch — run once per department, never re-enter the full-page loader
   useEffect(() => {
-    if (department) {
-      setLoading(true);
-      fetchProjectsAndRequests().then(() => {
-        if (department === "Technical") {
-          fetchUnreadInfo();
-          fetchEmployees();
+    if (!department || initialLoadRef.current) return;
+    initialLoadRef.current = true;
+    let cancelled = false;
+    setLoading(true);
+    fetchProjectsAndRequests()
+      .then(() => {
+        if (!cancelled && department === "Technical") {
+          return fetchEmployees();
         }
-      }).finally(() => setLoading(false));
-    }
-  }, [department, fetchProjectsAndRequests, fetchUnreadInfo, fetchEmployees]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [department, fetchProjectsAndRequests, fetchEmployees]);
 
   // Join rooms
   useEffect(() => {
@@ -549,16 +583,24 @@ useEffect(() => {
       return [...prev, normalized];
     });
 
-    // Optional: play sound when new request comes
-    playNotificationSound();
+    playChatNotificationSound();
   };
 
-  onEvent("newEmployeeRequest", handleNewEmployeeRequest);
+  const offNew = onEvent("newEmployeeRequest", handleNewEmployeeRequest);
+  const handleAllRequests = (payload: { data?: RequestProps[] }) => {
+    if (Array.isArray(payload?.data)) {
+      setRequests(payload.data);
+    } else {
+      fetchProjectsAndRequests();
+    }
+  };
+  const offAll = onEvent("allRequestsUpdate", handleAllRequests);
 
   return () => {
-    // Cleanup if your useSocket supports offEvent
+    offNew?.();
+    offAll?.();
   };
-}, [onEvent, department]);
+}, [onEvent, department, fetchProjectsAndRequests]);
 
   // Listen for request status updates
   useEffect(() => {
@@ -572,11 +614,9 @@ useEffect(() => {
       setTimeout(() => fetchUnreadInfo(), 100);  // Slight delay to ensure state update
     };
 
-    onEvent('employeeRequestStatusUpdate', handleRequestStatusUpdate);
+    const off = onEvent("employeeRequestStatusUpdate", handleRequestStatusUpdate);
 
-    return () => {
-      // Cleanup
-    };
+    return () => off?.();
   }, [onEvent, fetchUnreadInfo, department]);
 
   // Listen for new messages from project rooms (head, client)
@@ -611,21 +651,17 @@ useEffect(() => {
           }
         }
 
-        const newInfo = { ...prev, [projectId]: updatedProject };
-
         if (isNewUnread) {
-          playNotificationSound();
+          queueMicrotask(() => playChatNotificationSound());
         }
 
-        return newInfo;
+        return { ...prev, [projectId]: updatedProject };
       });
     };
 
-    onEvent('newMessage', handleNewMessage);
+    const off = onEvent("newMessage", handleNewMessage);
 
-    return () => {
-      // Cleanup
-    };
+    return () => off?.();
   }, [onEvent, department]);
 
   // Listen for new TL-Monitor messages (from monitor/employee)
@@ -647,21 +683,17 @@ useEffect(() => {
           isNewUnread = true;
         }
 
-        const newInfo = { ...prev, [projectId]: updatedProject };
-
         if (isNewUnread) {
-          playNotificationSound();
+          queueMicrotask(() => playChatNotificationSound());
         }
 
-        return newInfo;
+        return { ...prev, [projectId]: updatedProject };
       });
     };
 
-    onEvent('newTLMonitorMessage', handleNewTlMonitorMessage);
+    const off = onEvent("newTLMonitorMessage", handleNewTlMonitorMessage);
 
-    return () => {
-      // Cleanup
-    };
+    return () => off?.();
   }, [onEvent, department]);
 
   useEffect(() => {
@@ -681,11 +713,9 @@ useEffect(() => {
       fetchUnreadInfo();
     };
 
-    onEvent('messageSeen', handleMessageSeen);
+    const off = onEvent("messageSeen", handleMessageSeen);
 
-    return () => {
-      // Cleanup
-    };
+    return () => off?.();
   }, [onEvent, fetchUnreadInfo, department]);
 
   // Listen for TL-Monitor message seen
@@ -698,11 +728,9 @@ useEffect(() => {
       fetchUnreadInfo();
     };
 
-    onEvent('tlMonitorMessageSeen', handleTlMonitorMessageSeen);
+    const off = onEvent("tlMonitorMessageSeen", handleTlMonitorMessageSeen);
 
-    return () => {
-      // Cleanup
-    };
+    return () => off?.();
   }, [onEvent, fetchUnreadInfo, department]);
 
   // Listen for employee registration updates
@@ -722,11 +750,9 @@ useEffect(() => {
       );
     };
 
-    onEvent('employeeRegUpdate', handleEmployeeRegUpdate);
+    const off = onEvent("employeeRegUpdate", handleEmployeeRegUpdate);
 
-    return () => {
-      // Cleanup
-    };
+    return () => off?.();
   }, [onEvent, department]);
 
   useEffect(() => {
@@ -742,26 +768,42 @@ useEffect(() => {
     });
   };
 
-  onEvent("newEmployeeRegistration", handleNewEmployeeRegistration);
-  return () => {};
+  const offReg = onEvent("newEmployeeRegistration", handleNewEmployeeRegistration);
+  return () => offReg?.();
 }, [onEvent, department]);
 
-  // Listen for project status updates
+  // Listen for project status updates (both event names — backend emits projectStatusUpdated)
   useEffect(() => {
-    const handleProjectStatusUpdate = (data: { projectId: string; status: string; active_date?: string | null }) => {
-      setProjectDetails((prev) =>
-        prev.map((p) =>
-          p.project_id === data.projectId ? { ...p, status: data.status, active_date: data.active_date ?? p.active_date } : p
-        )
-      );
+    const handleProjectStatusUpdate = (data: {
+      projectId?: string;
+      project_id?: string;
+      status: string;
+      active_date?: string | null;
+    }) => {
+      const id = String(data.projectId ?? data.project_id ?? "");
+      if (!id) return;
+      setProjectDetails((prev) => {
+        const exists = prev.some((p) => String(p.project_id) === id);
+        if (!exists) {
+          queueMicrotask(() => fetchProjects());
+          return prev;
+        }
+        return prev.map((p) =>
+          String(p.project_id) === id
+            ? { ...p, status: data.status, active_date: data.active_date ?? p.active_date }
+            : p
+        );
+      });
     };
 
-    onEvent('projectStatusUpdate', handleProjectStatusUpdate);
+    const offA = onEvent("projectStatusUpdated", handleProjectStatusUpdate);
+    const offB = onEvent("projectStatusUpdate", handleProjectStatusUpdate);
 
     return () => {
-      // Cleanup
+      offA?.();
+      offB?.();
     };
-  }, [onEvent]);
+  }, [onEvent, fetchProjects]);
 
 useEffect(() => {
   const checkRole = async () => {
@@ -1178,10 +1220,9 @@ const filteredItems =
     });
   };
 
-  const playNotificationSound = () => {
-    const audio = new Audio('https://cdn.pixabay.com/audio/2022/01/18/audio_d3fd80e4d7.mp3');
-    audio.play().catch(err => console.error("Error playing notification sound:", err));
-  };
+  useEffect(() => {
+    unlockChatNotificationSound();
+  }, []);
 
   if (loading) {
     return <PageLoadingComponent />;
@@ -1567,7 +1608,8 @@ const filteredItems =
     >
       Talk to Client/Head
     </div>
-    {!dismissedNotifications.has(projectItem.project_id) && (
+    {!dismissedNotifications.has(projectItem.project_id) &&
+      !isQuietProjectStatus((projectItem as any).status) && (
       <UnreadDots
         showGreen={
           (unreadInfoForProject.unreadFromHead || 0) +
@@ -1704,7 +1746,8 @@ const filteredItems =
     >
       Talk to Client/Head
     </div>
-    {!dismissedNotifications.has(projectItem.project_id) && (
+    {!dismissedNotifications.has(projectItem.project_id) &&
+      !isQuietProjectStatus((projectItem as any).status) && (
       <div className="flex items-center gap-1.5 ml-1.5">
         {((unreadInfoForProject.unreadFromHead || 0) + (unreadInfoForProject.unreadFromClient || 0) > 0) && (
           <span
@@ -1747,7 +1790,9 @@ const filteredItems =
     >
       Talk to Employee
     </div>
-    {!dismissedNotifications.has(projectItem.project_id) && (unreadInfoForProject.unreadFromMonitor || 0) > 0 && (
+    {!dismissedNotifications.has(projectItem.project_id) &&
+      !isQuietProjectStatus((projectItem as any).status) &&
+      (unreadInfoForProject.unreadFromMonitor || 0) > 0 && (
       <div className="flex items-center gap-1.5 ml-1.5">
         <span
           className="relative flex h-3 w-3 cursor-pointer"
@@ -1868,7 +1913,8 @@ const filteredItems =
     >
       Talk to Client/Head
     </div>
-    {!dismissedNotifications.has(projectItem.project_id) && (
+    {!dismissedNotifications.has(projectItem.project_id) &&
+      !isQuietProjectStatus((projectItem as any).status) && (
       <UnreadDots
         showGreen={
           (unreadInfoForProject.unreadFromHead || 0) +
@@ -1904,7 +1950,8 @@ const filteredItems =
     >
       Talk to Employee
     </div>
-    {!dismissedNotifications.has(projectItem.project_id) && (
+    {!dismissedNotifications.has(projectItem.project_id) &&
+      !isQuietProjectStatus((projectItem as any).status) && (
       <UnreadDots
         showGreen={(unreadInfoForProject.unreadFromMonitor || 0) > 0}
         showBlue={false} // monitor currently has no mention flag

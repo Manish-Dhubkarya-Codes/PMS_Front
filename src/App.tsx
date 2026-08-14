@@ -19,6 +19,7 @@ import TeamLeaderProjectInfoWithEmployee from "./Screens/TeamLeader/TeamLeaderPr
 import { useGlobalPush } from "./hooks/useGlobalPush";
 // NEW: Import timer starters and postData for logout
 import { postData, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer } from "../src/BackendConnections/FetchBackendServices";
+import { unlockChatNotificationSound } from "./utils/chatLive";
 
 // AuthProvider (updated for timers on load)
 const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -47,6 +48,10 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     } finally {
       setIsLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    unlockChatNotificationSound();
   }, []);
 
   const login = (userData: { username: string; role: string }) => {
