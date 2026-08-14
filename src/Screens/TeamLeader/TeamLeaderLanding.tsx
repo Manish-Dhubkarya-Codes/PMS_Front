@@ -18,6 +18,7 @@ import { MdFolderOff } from "react-icons/md";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import Button2 from "../../UI_Components/Buttons/Button2";
 import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { readStoredUserData } from "../../utils/authStorage";
 
 interface ProjectListProps {
   workstream: string;
@@ -149,8 +150,7 @@ useEffect(() => {
   );
 }, [employeeRegRequests]);
 useEffect(() => {
-  const storedUserData = localStorage.getItem("userData");
-  const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
+  const parsedData = readStoredUserData();
 
   if (!parsedData) {
     // Don't redirect here again — checkRole already handles it

@@ -20,6 +20,7 @@ import { IoCloseCircle } from "react-icons/io5";
 import AllEmployeeList from "../Employees/AllEmployeeList";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { readStoredUserData } from "../../utils/authStorage";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
 interface Project {
   title: string;
@@ -92,8 +93,7 @@ const [activeTab, setActiveTab] = useState<string>(() => {
   const itemsPerPage = 6;
   const {emitEvent, onEvent, offEvent, connected} = useSocket();
   // Stored user data for headId
-  const storedUserData = localStorage.getItem("userData");
-  const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
+  const parsedData = readStoredUserData();
   const headId = parsedData?.headId;
   // FIXED: useGlobalPush at top level for Head (enables push)
   // const {requestPermission} = useGlobalPush(headId,'head')

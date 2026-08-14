@@ -4,6 +4,7 @@ import { serverURL } from "../../BackendConnections/FetchBackendServices";
 import { AuthContext } from "../../Screens/Authentication/AuthContext";
 import LogoutPopup from "./LogoutPopUp";
 import { postData } from "../../BackendConnections/FetchBackendServices";
+import { clearAuthStorage, readStoredRole } from "../../utils/authStorage";
 import { FaBolt, FaInfoCircle, FaCamera, FaUser } from "react-icons/fa";
 import { LuArrowDownNarrowWide, LuArrowUpNarrowWide } from "react-icons/lu";
 
@@ -13,7 +14,7 @@ interface ProfilePopupProps {
 }
 
 const ProfilePopup: React.FC<ProfilePopupProps> = ({ user, onClose }) => {
-  const storedUserRole = atob(localStorage.getItem("role") || "");
+  const storedUserRole = readStoredRole();
   const navigate = useNavigate();
   const authContext = useContext(AuthContext);
   if (!authContext) throw new Error("ProfilePopup must be used within an AuthProvider");
@@ -199,11 +200,10 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ user, onClose }) => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("userData");
-    localStorage.removeItem("role");
     localStorage.removeItem("headProjectListActiveTab");
-  localStorage.removeItem("employeeLandingActiveTab");
-  localStorage.removeItem("tlLandingActiveTab");
+    localStorage.removeItem("employeeLandingActiveTab");
+    localStorage.removeItem("tlLandingActiveTab");
+    clearAuthStorage();
     logout();
     navigate("/login-reg");
   };

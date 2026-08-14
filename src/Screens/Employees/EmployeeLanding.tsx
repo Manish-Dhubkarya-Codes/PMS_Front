@@ -14,6 +14,7 @@ import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingCompone
 import { useSocket } from "../../BackendConnections/useSocket";
 import { MdDoNotTouch } from "react-icons/md";
 import { isQuietProjectStatus } from "../../utils/chatLive";
+import { readStoredRole, readStoredUserData } from "../../utils/authStorage";
 
 interface ProjectDetailsProps {
   workstream: string;
@@ -303,15 +304,12 @@ useEffect(() => {
   useEffect(() => {
     const fetchEmployeeData = async () => {
       try {
-        const storedUserData = localStorage.getItem("userData"); // contains full user data
-        const storedRole = localStorage.getItem("role");
+        const parsedUserData = readStoredUserData();
+        const role = readStoredRole();
 
-        if (!storedUserData || !storedRole) {
+        if (!parsedUserData || !role) {
           throw new Error("No user data or role found in localStorage");
         }
-
-        const parsedUserData = JSON.parse(atob(storedUserData));
-        const role = atob(storedRole);
 
         if (role !== "Employee") {
           throw new Error("Invalid role in localStorage");

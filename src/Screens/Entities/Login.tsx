@@ -5,6 +5,7 @@ import React, { useEffect, useState, useContext } from "react";
 import { AiOutlineEye, AiOutlineEyeInvisible } from "react-icons/ai";
 import { IoMdCloseCircle } from "react-icons/io";
 import { postData, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer } from "../../BackendConnections/FetchBackendServices";
+import { persistAuthSession } from "../../utils/authStorage";
 import { FaInfoCircle } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../Authentication/AuthContext";
@@ -51,8 +52,6 @@ const Login: React.FC<Props> = ({ isOpen, onClose, title }) => {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [resetError, setResetError] = useState<string | null>(null);
   const [showNewPassword, setShowNewPassword] = useState(false);
-
-  const encodeToBase64 = (data: string): string => btoa(data);
 
   const nameMappings: Record<string, string> = {
     name: "username",
@@ -296,26 +295,29 @@ const handleRequestReset = async () => {
         response = await postData("head/check_login_head", submitData);
       }
 
-      if (response && response.status && response.message) {
-        setSuccess(response.message);
+      if (response && response.status && response.data) {
+        setSuccess(response.message || "Login successful!");
 
-        if (response.accessExp) localStorage.setItem("accessTokenExp", response.accessExp);
-        if (response.refreshExp) localStorage.setItem("refreshTokenExp", response.refreshExp);
+        persistAuthSession({
+          role: formData.role,
+          userData: response.data,
+          accessToken: response.accessToken,
+          refreshToken: response.refreshToken,
+          accessExp: response.accessExp,
+          refreshExp: response.refreshExp,
+        });
 
         startAccessTokenRefreshTimer();
         startRefreshTokenRefreshTimer();
 
-        localStorage.setItem("role", encodeToBase64(formData.role));
-        localStorage.setItem("userData", encodeToBase64(JSON.stringify(response.data)));
-
         login({ username: formData.name, role: formData.role });
 
         if (formData.role === "Employee") navigate("/employeelanding");
-        else if (formData.role === "Team Leader") navigate("/teamleaderdashboard");
+        else if (formData.role === "Team Leader") navigate("/teamleaderlanding");
         else if (formData.role === "Client") navigate("/clientprofile");
         else if (formData.role === "Head") navigate("/headprojectlist");
       } else {
-        setError("Login failed. Please check your credentials.");
+        setError(response?.message || "Login failed. Please check your credentials.");
       }
     } catch (err: any) {
       console.log("Login catch error:", err);

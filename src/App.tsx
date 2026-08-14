@@ -20,6 +20,7 @@ import { useGlobalPush } from "./hooks/useGlobalPush";
 // NEW: Import timer starters and postData for logout
 import { postData, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer } from "../src/BackendConnections/FetchBackendServices";
 import { unlockChatNotificationSound } from "./utils/chatLive";
+import { clearAuthStorage, readStoredRole, readStoredUserData } from "./utils/authStorage";
 
 // AuthProvider (updated for timers on load)
 const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -28,16 +29,20 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     try {
-      const storedUserData = atob(localStorage.getItem("userData") || "");
-      const storedRole = atob(localStorage.getItem("role") || "");
-      // console.log("AuthProvider useEffect - storedUserData:", storedUserData, "storedRole:", storedRole);
-      if (storedUserData && storedRole) {
-        const parsedUserData = JSON.parse(storedUserData);
+      const parsedUserData = readStoredUserData();
+      const storedRole = readStoredRole();
+      if (parsedUserData && storedRole) {
         setUser({
-          username: parsedUserData.username || parsedUserData.email || parsedUserData.name || "unknown",
+          username:
+            parsedUserData.username ||
+            parsedUserData.email ||
+            parsedUserData.name ||
+            parsedUserData.employeeName ||
+            parsedUserData.clientName ||
+            parsedUserData.headName ||
+            "unknown",
           role: storedRole,
         });
-        // NEW: Start timers if exps exist (for persisted sessions)
         if (localStorage.getItem('accessTokenExp') && localStorage.getItem('refreshTokenExp')) {
           startAccessTokenRefreshTimer();
           startRefreshTokenRefreshTimer();
@@ -67,11 +72,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // console.error('Error during backend logout:', error);
     } finally {
       setUser(null);
-      localStorage.removeItem("role");
-      localStorage.removeItem("userData");
-      // NEW: Clear token exps to stop timers and match logoutAndRedirect
-      localStorage.removeItem("accessTokenExp");
-      localStorage.removeItem("refreshTokenExp");
+      clearAuthStorage();
     }
   };
 
@@ -143,8 +144,7 @@ const AppRoutes = () => {
 
 // Main App
 function App() {
-  const storedUserData = localStorage.getItem("userData");
-  const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
+  const parsedData = readStoredUserData();
   const headId = parsedData?.headId || null;
 
   // Global push

@@ -81,6 +81,10 @@ function uploadChunkXHR(
   const promise = new Promise<ChunkUploadResponse>((resolve, reject) => {
     xhr.open("POST", url, true);
     xhr.withCredentials = true;
+    const accessToken = localStorage.getItem("accessToken");
+    if (accessToken) {
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded);
     };

@@ -4,6 +4,7 @@ import { FaUserCircle } from "react-icons/fa";
 import ProfilePopup from "./ProfilePopUp";
 import { serverURL } from "../../BackendConnections/FetchBackendServices";
 import { useNavigate } from "react-router-dom";
+import { readStoredRole, readStoredUserData } from "../../utils/authStorage";
 
 interface MainNavigationProps {
   isMenuHide: boolean;
@@ -21,20 +22,8 @@ const MainNavigation: React.FC<MainNavigationProps> = ({ isMenuHide }) => {
     // add other properties as needed
   };
 
-  let parsedData: UserData = {};
-  const storedUserData = localStorage.getItem("userData");
-  if (storedUserData) {
-    try {
-       parsedData = JSON.parse(atob(storedUserData));
-      //  console.log("PRRSSSS", profilePic)
-    } catch (error) {
-      console.warn("Error parsing userData in MainNavigation:", error);
-      // Use default empty user object if parsing fails
-      parsedData = {};
-    }
-  }
-
-   const storedUserRole = atob(localStorage.getItem("role") || "");
+  let parsedData: UserData = readStoredUserData() || {};
+   const storedUserRole = readStoredRole();
   
     useEffect(() => {
       // Set initial profile pic based on role

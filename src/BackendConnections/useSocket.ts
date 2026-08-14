@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { serverURL } from "./FetchBackendServices";
+import { getAccessToken } from "../utils/authStorage";
 
 interface UseSocketReturn {
   socket: Socket | null;
@@ -31,6 +32,8 @@ function getSharedSocket(url: string): Socket {
   sharedUrl = url;
   sharedSocket = io(url, {
     transports: ["websocket", "polling"],
+    withCredentials: true,
+    auth: { token: getAccessToken() || undefined },
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 500,

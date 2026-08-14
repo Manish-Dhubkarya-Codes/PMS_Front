@@ -1,20 +1,53 @@
 // Updated FetchBackendServices.tsx
 
 import axios from "axios";
+import {
+  clearAuthStorage,
+  getAccessToken,
+  getRefreshToken,
+  persistAuthTokens,
+} from "../utils/authStorage";
 
 const serverURL = 'https://api.cognicodeedutech.com';
 console.log('🚀 Axios baseURL being used:', serverURL || '(empty = using Vite proxy)');
-// const ACCESS_TOKEN_LIFETIME = 15 * 60 * 1000; // 15 minutes in ms (fallback if no exp)
-// const REFRESH_TOKEN_LIFETIME = 7 * 24 * 60 * 60 * 1000; // 7 days in ms (fallback if no exp)
 
 // Global flag to prevent multiple simultaneous refreshes
 let isRefreshing = false;
 let failedQueue: any[] = [];
+let accessRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let refreshTokenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function authHeaders(): Record<string, string> {
+  const token = getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function persistTokenResponse(data: any) {
+  if (!data) return;
+  persistAuthTokens({
+    accessToken: data.accessToken,
+    refreshToken: data.refreshToken,
+    accessExp: data.accessExp,
+    refreshExp: data.refreshExp,
+  });
+}
+
+function shouldSkipAuthRefresh(url?: string) {
+  const path = String(url || "");
+  return (
+    path.includes("check_login") ||
+    path.includes("/refresh") ||
+    path.includes("register_") ||
+    path.includes("verify_") ||
+    path.includes("logout")
+  );
+}
 
 // Call this after login success or app load if user logged in
 function startAccessTokenRefreshTimer() {
   const expTime = localStorage.getItem('accessTokenExp');
   if (!expTime) return;
+  if (accessRefreshTimer) clearTimeout(accessRefreshTimer);
 
   const expirationTime = parseInt(expTime, 10);
   const timeToExpire = expirationTime - Date.now();
@@ -24,7 +57,7 @@ function startAccessTokenRefreshTimer() {
     refreshTime = 0;  // Refresh immediately if expired or too close
   }
 
-  setTimeout(async () => {
+  accessRefreshTimer = setTimeout(async () => {
     try {
       await refreshAccessToken();
       console.log('Access token refreshed via timer');
@@ -38,6 +71,7 @@ function startAccessTokenRefreshTimer() {
 function startRefreshTokenRefreshTimer() {
   const expTime = localStorage.getItem('refreshTokenExp');
   if (!expTime) return;
+  if (refreshTokenTimer) clearTimeout(refreshTokenTimer);
 
   const expirationTime = parseInt(expTime, 10);
   const timeToExpire = expirationTime - Date.now();
@@ -47,7 +81,7 @@ function startRefreshTokenRefreshTimer() {
     refreshTime = 0;  // Refresh immediately if expired or too close
   }
 
-  setTimeout(async () => {
+  refreshTokenTimer = setTimeout(async () => {
     try {
       await refreshAccessToken();
       console.log('Refresh token refreshed via timer');
@@ -65,16 +99,18 @@ const api = axios.create({
 
 // Helper function to clear auth and redirect (reusable)
 const logoutAndRedirect = () => {
-  localStorage.removeItem('role');
-  localStorage.removeItem('userData');
-  localStorage.removeItem('accessTokenExp');  // Clear exp
-  localStorage.removeItem('refreshTokenExp');  // Clear refresh exp
+  clearAuthStorage();
   window.location.href = '/login-reg'; // Forces full reload to clear state
 };
 
-// Request interceptor: No manual header attachment (rely on cookies)
+// Request interceptor: cookies when allowed, Bearer token when browsers block them
 api.interceptors.request.use(
   (config) => {
+    const token = getAccessToken();
+    if (token) {
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     if (typeof FormData !== "undefined" && config.data instanceof FormData) {
       const headers: any = config.headers;
       if (headers) {
@@ -97,13 +133,13 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalConfig = error.config;
+    if (!originalConfig) return Promise.reject(error);
 
     // Skip refresh for login or refresh endpoints to prevent loops
     if (
       error.response?.status === 401 &&
       !originalConfig._retry &&
-      originalConfig.url !== '/head/refresh' &&
-      !originalConfig.url.includes('check_login')
+      !shouldSkipAuthRefresh(originalConfig.url)
     ) {
       originalConfig._retry = true;
 
@@ -117,16 +153,13 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshResponse = await api.post('/head/refresh');  // Backend sets cookies, returns exps in body
-        const { accessExp, refreshExp } = refreshResponse.data;
+        const refreshResponse = await api.post('/head/refresh', {
+          refreshToken: getRefreshToken(),
+        }, {
+          withCredentials: true,
+        });
+        persistTokenResponse(refreshResponse.data);
 
-        // Store new exps (do not store tokens)
-        if (accessExp) {
-          localStorage.setItem('accessTokenExp', accessExp.toString());
-        }
-        if (refreshExp) {
-          localStorage.setItem('refreshTokenExp', refreshExp.toString());
-        }
         // Process queued requests
         failedQueue.forEach(({ resolve, config }) => {
           resolve(api(config));
@@ -155,18 +188,13 @@ api.interceptors.response.use(
 
 async function refreshAccessToken() {
   try {
-    const refreshResponse = await api.post('/head/refresh', {}, {
+    const refreshResponse = await api.post('/head/refresh', {
+      refreshToken: getRefreshToken(),
+    }, {
       withCredentials: true
     });
 
-    // Update exps from response (backend sends exps)
-    const { accessExp, refreshExp } = refreshResponse.data;
-    if (accessExp) {
-      localStorage.setItem('accessTokenExp', accessExp.toString());
-    }
-    if (refreshExp) {
-      localStorage.setItem('refreshTokenExp', refreshExp.toString());
-    }
+    persistTokenResponse(refreshResponse.data);
     startAccessTokenRefreshTimer(); // Restart timer with new exp
     startRefreshTokenRefreshTimer(); // Restart refresh timer with new exp
   } catch (e) {
@@ -182,8 +210,9 @@ const postData = async (url: any, body: any) => {
     });
     const data = response.data;
     return data;
-  } catch (e) {
-    // Let interceptor handle 401
+  } catch (e: any) {
+    // Keep the backend message so login/register can show pending-approval etc.
+    if (e?.response?.data) return e.response.data;
     return null;
   }
 };
@@ -194,6 +223,7 @@ const postFile = async (url: string, formData: FormData) => {
       method: "POST",
       body: formData,
       credentials: "include",
+      headers: authHeaders(),
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
@@ -213,12 +243,13 @@ const getData = async (url: any) => {
     });
     const data = response.data;
     return data;
-  } catch (e) {
+  } catch (e: any) {
     // Let interceptor handle 401
     console.error('getData error:', e);
+    if (e?.response?.data) return e.response.data;
     return null;
   }
 };
 
 // Export helper for global use (e.g., in App.js or protected components)
-export { serverURL, postData, postFile, getData, logoutAndRedirect, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer };
+export { serverURL, postData, postFile, getData, logoutAndRedirect, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer, authHeaders };

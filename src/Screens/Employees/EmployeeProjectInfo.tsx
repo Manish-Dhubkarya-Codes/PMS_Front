@@ -26,6 +26,7 @@ import {
 } from "../../FileSendUI/monitorChatMerge";
 import { buildChatFilePayload, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
+import { readStoredUserData } from "../../utils/authStorage";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -121,8 +122,7 @@ const [isRequesting, setIsRequesting] = useState(false);  // ← for Request but
   const prevMessagesLengthRef = useRef(0);
   const location = useLocation();
   const { item } = location.state || {};
-  const userData = atob(localStorage.getItem("userData") || "");
-  const employeeData = JSON.parse(userData);
+  const employeeData = readStoredUserData() || {};
   console.log('test',employeeData)
   const { socket, connected } = useSocket();
   useEffect(() => {
