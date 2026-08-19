@@ -170,8 +170,7 @@ const headChats = getChatArray(projectData.headchats);
     Workstream: project.workstream || "",
     Description: Array.isArray(project.description) ? project.description.join('<br/><br/>') : project.description || '',
     SubmissionDate: project.deadline || "",
-    // NEW: Respect backend "status" (e.g., "Completed" from Team Leader updates) — fallback to deadline logic
-    status: project.status || (project.status === "Completed" ? "Completed" : "On-Going"),
+    status: project.status || "Hold",
     ProjectId: project.project_id,
     unreadFromHead,
     unreadFromTL,
@@ -198,9 +197,11 @@ useEffect(() => {
   }, 0);
   setTotalUnread(newTotalUnread);
 
-  // NEW: On-Going = total projects MINUS Completed (as requested)
   const completed = projectDetails.filter((p: Project) => p.status === "Completed").length;
-  const onGoing = projectDetails.length - completed;  // Or: projectDetails.filter((p: Project) => p.status !== "Completed").length
+  const onGoing = projectDetails.filter((p: Project) => {
+    const s = (p.status || "").toLowerCase();
+    return s === "active" || s === "on-going";
+  }).length;
   setProjectOnGoing(onGoing);
   setProjectCompleted(completed);
 
@@ -466,9 +467,15 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
   if (aTotalUnread !== bTotalUnread) {
     return bTotalUnread - aTotalUnread;
   }
-  // NEW: Prioritize On-Going over Completed
-  if (a.status.toLowerCase() === "on-going" && b.status.toLowerCase() === "completed") return -1;
-  if (a.status.toLowerCase() === "completed" && b.status.toLowerCase() === "on-going") return 1;
+  const statusRank = (status: string) => {
+    const s = (status || "").toLowerCase();
+    if (s === "active" || s === "on-going") return 0;
+    if (s === "hold") return 1;
+    if (s === "completed") return 2;
+    return 3;
+  };
+  const rankDiff = statusRank(a.status) - statusRank(b.status);
+  if (rankDiff !== 0) return rankDiff;
   return new Date(b.SubmissionDate).getTime() - new Date(a.SubmissionDate).getTime();
 });
 
@@ -565,14 +572,14 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
               <div
                 className={`items-center flex justify-center ${
                   isXXS || isXS
-                    ? "w-[200px] h-[200px]"
+                    ? "w-[100px] h-[100px]"
                     : isSM
-                    ? "w-[200px] h-[200px]"
+                    ? "w-[100px] h-[100px]"
                     : isMD
-                    ? "w-[200px] h-[200px]"
+                    ? "w-[100px] h-[100px]"
                     : isLG || isXL
-                    ? "w-[220px] h-[220px]"
-                    : "w-[275px] h-[275px]"
+                    ? "w-[110px] h-[110px]"
+                    : "w-[130px] h-[130px]"
                 } rounded-full overflow-hidden border-6 border-gray-300 shadow-md`}
               >
                 {clientData.Profile ? (
@@ -582,14 +589,14 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
                     className="w-full h-full p-3 rounded-full object-cover"
                   />
                 ) : (
-                  <FaUser size={100} color="#10B981" />
+                  <FaUser size={50} color="#10B981" />
                 )}
               </div>
               <div className="text-center text-black">
-                <div className={`${is2XL ? "text-[36px] mt-2" : isXXS || isXS || isSM ? "text-[27px]" : "text-[36px]"} font-normal`}>
+                <div className={`${is2XL ? "text-[24px] mt-2" : isXXS || isXS || isSM ? "text-[18px]" : "text-[24px]"} font-normal`}>
                   {clientData.ClientName}
                 </div>
-                <p className={`text-gray-700 ${is2XL ? "text-[24px] mt-2" : "text-[24px]"} font-medium`}>
+                <p className={`text-gray-700 ${is2XL ? "text-[18px] mt-2" : "text-[18px]"} font-medium`}>
                   {clientData.Designation} <span>({clientData.Degree})</span>
                 </p>
               </div>
@@ -713,7 +720,7 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
                             text={`${is2XL ? "text-[15px]" : "text-[12px]"} `}
                             value={item.Workstream}
                           />
-                        <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                        <div className="flex items-center gap-2 pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+item.ProjectId}
   </span>
@@ -798,8 +805,12 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
                         <div
     className={`w-[30%] justify-center font-normal text-[12px] -tracking-[0.02rem] flex items-center`}
   >
-    {/* NEW: Clean status labels */}
-    {item.status === "On-Going" ? "ON-GOING" : "COMPLETED"}
+    {(() => {
+      const s = (item.status || "").toLowerCase();
+      if (s === "completed") return "Completed";
+      if (s === "active" || s === "on-going") return "ON-GOING";
+      return "HOLD";
+    })()}
   </div>
                       </div>
                     </div>

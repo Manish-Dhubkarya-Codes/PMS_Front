@@ -68,7 +68,24 @@ interface EmployeeRegRequest {
   gender: string;
   role: "Employee" | "Team Leader";
   status: "pending" | "accepted" | "rejected";
+  created_at?: string;
 }
+
+const getDateTime = (value?: string | number | null) => {
+  if (value == null || value === "") return 0;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? 0 : t;
+};
+
+const sortByLatestDate = <T extends { created_at?: string; id?: string }>(a: T, b: T) => {
+  const aTime = getDateTime(a.created_at);
+  const bTime = getDateTime(b.created_at);
+  if (aTime !== bTime) return bTime - aTime;
+  const aId = Number(a.id);
+  const bId = Number(b.id);
+  if (!Number.isNaN(aId) && !Number.isNaN(bId) && (aId || bId)) return bId - aId;
+  return 0;
+};
 
 const TeamLeaderLanding: React.FC = () => {
   const authContext = useContext(AuthContext);
@@ -124,10 +141,7 @@ const TeamLeaderLanding: React.FC = () => {
     try {
       const employeeRegResponse = await getData('employees/fetch_all_registrations');
       if (employeeRegResponse.status) {
-        const sortedData = (employeeRegResponse.data as EmployeeRegRequest[]).sort((a, b) => {
-          const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-          return statusOrder[a.status] - statusOrder[b.status];
-        });
+        const sortedData = (employeeRegResponse.data as EmployeeRegRequest[]).sort(sortByLatestDate);
         setEmployeeRegRequests((prev) => {
           if (JSON.stringify(prev) !== JSON.stringify(sortedData)) {
             return sortedData;
@@ -743,10 +757,7 @@ useEffect(() => {
           .map((item) =>
             item.id === data.id ? { ...item, status: data.status } : item
           )
-          .sort((a, b) => {
-            const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-            return statusOrder[a.status] - statusOrder[b.status];
-          })
+          .sort(sortByLatestDate)
       );
     };
 
@@ -761,10 +772,7 @@ useEffect(() => {
   const handleNewEmployeeRegistration = (data: EmployeeRegRequest) => {
     setEmployeeRegRequests((prev) => {
       if (prev.some((item) => item.id === data.id)) return prev;
-      return [data, ...prev].sort((a, b) => {
-        const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-        return statusOrder[a.status] - statusOrder[b.status];
-      });
+      return [data, ...prev].sort(sortByLatestDate);
     });
   };
 
@@ -888,10 +896,7 @@ useEffect(() => {
             .map((item) =>
               item.id === requestId ? { ...item, status: 'accepted' as 'accepted' } : item
             )
-            .sort((a, b) => {
-              const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-              return statusOrder[a.status] - statusOrder[b.status];
-            })
+            .sort(sortByLatestDate)
         );
       } else {
         setError(response.message || "Failed to verify employee.");
@@ -921,10 +926,7 @@ useEffect(() => {
             .map((item) =>
               item.id === requestId ? { ...item, status: 'rejected' as 'rejected' } : item
             )
-            .sort((a, b) => {
-              const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-              return statusOrder[a.status] - statusOrder[b.status];
-            })
+            .sort(sortByLatestDate)
         );
       } else {
         setError(response.message || "Failed to decline employee.");
@@ -1008,7 +1010,7 @@ useEffect(() => {
           (filter === "Verified" && item.status === "accepted") ||
           (filter === "Rejected" && item.status === "rejected")
         ))
-  );
+  ).slice().sort(sortByLatestDate);
 
   const completedProjectIds = new Set(
     projectDetails
@@ -1376,7 +1378,31 @@ const filteredItems =
           <MainSearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         </div>
       </div>
-      <div className={`flex w-full gap-x-5 items-start shrink-0 flex-row`}>
+      <div className="flex w-full flex-col">
+        <div className="flex w-full items-start">
+          {!(isXXS || isXS || isSM || isMD) && <div className="w-[25%] shrink-0" />}
+          <div
+            className={`items-center flex overflow-visible ${isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%] justify-start"
+              }`}
+          >
+            <div className={`w-full overflow-visible ${isXXS || isXS || isSM || isMD || department === "Technical" ? "" : "mr-[29%]"}`}>
+            <Navigation1
+  tabs={tabs}
+  activeTab={activeTab}
+  setActiveTab={(tab) => {
+    setActiveTab(tab);
+    localStorage.setItem("tlLandingActiveTab", tab);
+  }}
+  totalUnreadActive={totalUnreadActive}
+  totalUnreadOngoing={totalUnreadOngoing}
+  totalUnreadAssigned={totalUnreadAssigned}
+  totalUnreadRequests={totalUnreadRequests}
+  totalPendingVerify={totalPendingVerify}
+/>
+            </div>
+          </div>
+        </div>
+      <div className="flex w-full gap-x-5 items-start">
         {isXXS || isXS || isSM || isMD ? (
           renderDrawer && (
             <div
@@ -1394,7 +1420,7 @@ const filteredItems =
             </div>
           )
         ) : (
-          <div className="w-[25%] mt-2">
+          <div className="w-[25%] shrink-0 mt-7">
             <Filter
               filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
               setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
@@ -1403,29 +1429,10 @@ const filteredItems =
           </div>
         )}
         <div
-          className={`flex flex-col ${isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%]"
+          className={`flex flex-col min-w-0 ${isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%]"
             }`}
         >
-          <div
-            className={`items-center flex  ${isXXS || isXS || isSM || isMD ? "w-full" : "justify-start w-full"
-              }`}
-          >
-            <div className={`w-full ${isXXS || isXS || isSM || isMD || department === "Technical" ? "" : "mr-[29%]"}`}>
-            <Navigation1
-  tabs={tabs}
-  activeTab={activeTab}
-  setActiveTab={(tab) => {
-    setActiveTab(tab);
-    localStorage.setItem("tlLandingActiveTab", tab);
-  }}
-  totalUnreadActive={totalUnreadActive}
-  totalUnreadOngoing={totalUnreadOngoing}
-  totalUnreadAssigned={totalUnreadAssigned}
-  totalUnreadRequests={totalUnreadRequests}
-  totalPendingVerify={totalPendingVerify}
-/>         </div>
-          </div>
-          <div className="overflow-x-auto">
+          <div className={activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"}>
             {department === "Technical" ? (
               activeTab === "Requests" ? (
                 filteredItems.length > 0 ? (
@@ -1449,7 +1456,7 @@ const filteredItems =
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={item.workstream}
                               />
-                             <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                             <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:" + item.project_id}
   </span>
@@ -1576,24 +1583,24 @@ const filteredItems =
                       <div
                         key={index}
                         className={`flex relative ${hasAnyUnreadOrMention ? "pb-10" : ""} justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
-                          } w-full min-w-[700px] flex-col`}
+                          } w-full min-w-0 flex-col`}
                       >
-                        <div className="flex flex-col-reverse items-start justify-start w-full">
-                          <div className="flex items-start justify-between w-full">
-                            <div className="flex gap-2 items-center justify-start w-full">
+                        <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
+                          <div className="flex items-start justify-between w-full min-w-0 gap-2">
+                            <div className="flex gap-2 items-center justify-start min-w-0 flex-1">
                             <Button1
                               width={widthClass}
                               gradientType="gradient1"
                               text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                               value={item.workstream}
                             />
-                            <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                            <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
 </div>
 </div>
-<div className="flex items-center space-x-3">
+<div className="flex items-center space-x-3 shrink-0">
   <div className="flex items-center">
     <div
       className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
@@ -1633,15 +1640,15 @@ const filteredItems =
                           </div>
                           <div className="border-t-2 border-[#000000] w-full"></div>
                         </div>
-                        <div className="flex mt-3 w-full pl-[2vw] justify-between items-center">
+                        <div className="flex mt-3 w-full pl-[2vw] justify-between items-center min-w-0 gap-2">
                           <div
-                            className={`text-[#000000] w-[35%] text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"
+                            className={`text-[#000000] w-[35%] min-w-0 break-words text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"
                               } -tracking-[0.02rem]`}
                           >
                             {item.title}
                           </div>
                          <div
-  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] min-w-0 ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
 >
   <div>
     Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
@@ -1666,7 +1673,7 @@ const filteredItems =
   )}
 </div>
                           <div
-                            className={`text-[#000000]  w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
+                            className={`text-[#000000]  w-[30%] min-w-0 break-words font-normal text-[12px] -tracking-[0.02rem]`}
                           >
                             {item.clientName || "N/A"}
                           </div>
@@ -1727,7 +1734,7 @@ const filteredItems =
                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                   value={projectItem.workstream}
                 />
-                <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
@@ -1893,7 +1900,7 @@ const filteredItems =
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={projectItem.workstream}
                               />
-                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                              <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
@@ -2145,7 +2152,7 @@ const filteredItems =
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={projectItem.workstream}
                               />
-                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                              <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
@@ -2265,7 +2272,7 @@ const filteredItems =
                               text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                               value={item.workstream}
                             />
-                            <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                            <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+item.project_id}
   </span>
@@ -2381,21 +2388,21 @@ const filteredItems =
                         <div
                           key={index}
                           className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
-                            } w-full min-w-[700px] flex-col`}
+                            } w-full min-w-0 flex-col`}
                           onClick={() => {
                             setSelectedProject(projectItem);
                             setShowModal(true);
                           }}
                         >
-                          <div className="flex flex-col-reverse items-start justify-start w-full">
-                            <div className="flex items-start gap-2 w-full">
+                          <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
+                            <div className="flex items-start gap-2 w-full min-w-0">
                               <Button1
                                 width={widthClass}
                                 gradientType="gradient1"
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                 value={projectItem.workstream}
                               />
-                              <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                              <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
@@ -2403,15 +2410,15 @@ const filteredItems =
                             </div>
                             <div className="border-t-2 border-[#000000] w-full"></div>
                           </div>
-                          <div className="flex mt-3 w-full pl-[2vw] justify-between items-center">
+                          <div className="flex mt-3 w-full pl-[2vw] justify-between items-center min-w-0 gap-2">
                             <div
-                              className={`text-[#000000] w-[20%] text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"
+                              className={`text-[#000000] w-[20%] min-w-0 break-words text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"
                                 } -tracking-[0.02rem]`}
                             >
                               {projectItem.title}
                             </div>
                            <div
-  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] min-w-0 ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
 >
   <div>
     Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", {
@@ -2436,7 +2443,7 @@ const filteredItems =
   )}
 </div>
                             <div
-                              className={`text-[#000000] w-[20%] font-normal text-[12px] -tracking-[0.02rem]`}
+                              className={`text-[#000000] w-[20%] min-w-0 break-words font-normal text-[12px] -tracking-[0.02rem]`}
                             >
                               {projectItem.clientName || "N/A"}
                             </div>
@@ -2536,7 +2543,7 @@ const filteredItems =
                                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                                   value={projectItem.workstream}
                                 />
-                                <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                                <div className="flex items-center gap-2  pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
@@ -2660,7 +2667,8 @@ const filteredItems =
           </div>
         </div>
       </div>
-      <div className="mt-8">
+      </div>
+      <div className="mt-8 w-full flex justify-center">
         <PaginationNav
           total={totalPages}
           current={currentPage}

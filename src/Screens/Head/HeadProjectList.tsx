@@ -44,6 +44,7 @@ interface ClientListProps {
   name: string;
   email: string;
   mobile: string;
+  created_at?: string;
 }
 interface TeamLeaderListProps extends ClientListProps {}
 interface EmployeeRegRequest {
@@ -55,10 +56,27 @@ interface EmployeeRegRequest {
   gender: string;
   role: "Employee" | "Team Leader";
   status: "pending" | "accepted" | "rejected";
+  created_at?: string;
 }
 interface SecurityKey extends ClientListProps {
   type: "client" | "teamLeader";
 }
+
+const getDateTime = (value?: string | number | null) => {
+  if (value == null || value === "") return 0;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? 0 : t;
+};
+
+const sortByLatestDate = <T extends { created_at?: string; id?: string }>(a: T, b: T) => {
+  const aTime = getDateTime(a.created_at);
+  const bTime = getDateTime(b.created_at);
+  if (aTime !== bTime) return bTime - aTime;
+  const aId = Number(a.id);
+  const bId = Number(b.id);
+  if (!Number.isNaN(aId) && !Number.isNaN(bId) && (aId || bId)) return bId - aId;
+  return 0;
+};
 const HeadProjectList: React.FC = () => {
   const navigate = useNavigate();
   const [currentPage, setCurrentPage] = useState(1);
@@ -190,10 +208,7 @@ useEffect(() => {
         .map((item) =>
           item.id === data.id ? { ...item, status: data.status } : item
         )
-        .sort((a, b) => {
-          const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-          return statusOrder[a.status] - statusOrder[b.status];
-        })
+        .sort(sortByLatestDate)
     );
   }, []);
   // NEW: Ref to track if socket listeners added (prevents duplicates)
@@ -271,10 +286,7 @@ useEffect(() => {
     try {
       const employeeRegResponse = await getData('employees/fetch_all_registrations');
       if (employeeRegResponse.status) {
-        const sortedData = (employeeRegResponse.data as EmployeeRegRequest[]).sort((a, b) => {
-          const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-          return statusOrder[a.status] - statusOrder[b.status];
-        });
+        const sortedData = (employeeRegResponse.data as EmployeeRegRequest[]).sort(sortByLatestDate);
         setEmployeeRegRequests(sortedData);
       } else {
         setError(employeeRegResponse.data?.message || "Failed to fetch employee registrations.");
@@ -498,10 +510,7 @@ useEffect(() => {
     console.log('🟢 New employee registration received via socket:', data);
     setEmployeeRegRequests((prev) => {
       if (prev.some(item => item.id === data.id)) return prev;
-      return [data, ...prev].sort((a, b) => {
-        const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-        return statusOrder[a.status] - statusOrder[b.status];
-      });
+      return [data, ...prev].sort(sortByLatestDate);
     });
     // Also refetch to ensure consistency
     fetchEmployees();
@@ -514,10 +523,7 @@ useEffect(() => {
         .map((item) =>
           item.id === data.id ? { ...item, status: data.status } : item
         )
-        .sort((a, b) => {
-          const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-          return statusOrder[a.status] - statusOrder[b.status];
-        })
+        .sort(sortByLatestDate)
     );
   };
 
@@ -610,10 +616,7 @@ const handleVerifyEmployee = async (requestId: string) => {
       .map((item) =>
         item.id === requestId ? { ...item, status: 'accepted' as const } : item
       )
-      .sort((a, b) => {
-        const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-        return statusOrder[a.status] - statusOrder[b.status];
-      })
+      .sort(sortByLatestDate)
   );
 
   setVerifyingIds((prev) => new Set([...prev, requestId]));
@@ -645,10 +648,7 @@ const handleDeclineEmployee = async (requestId: string) => {
       .map((item) =>
         item.id === requestId ? { ...item, status: 'rejected' as const } : item
       )
-      .sort((a, b) => {
-        const statusOrder = { pending: 1, accepted: 2, rejected: 3 };
-        return statusOrder[a.status] - statusOrder[b.status];
-      })
+      .sort(sortByLatestDate)
   );
 
   setDecliningIds((prev) => new Set([...prev, requestId]));
@@ -715,7 +715,7 @@ const handleDeclineEmployee = async (requestId: string) => {
   const combinedKeys: SecurityKey[] = useMemo(() => [
     ...clientDetails.map(c => ({ ...c, type: "client" as const })),
     ...teamLeaderDetails.map(t => ({ ...t, type: "teamLeader" as const }))
-  ], [clientDetails, teamLeaderDetails]);
+  ].sort(sortByLatestDate), [clientDetails, teamLeaderDetails]);
   const filteredSecurityKeys = useMemo(() => {
     return combinedKeys.filter((item) =>
       item.key_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -739,7 +739,7 @@ const handleDeclineEmployee = async (requestId: string) => {
           (filter === "Verified" && item.status === "accepted") ||
           (filter === "Rejected" && item.status === "rejected")
         ))
-  );
+  ).slice().sort(sortByLatestDate);
   const totalPages = Math.max(
   1,
   Math.ceil(
@@ -813,6 +813,39 @@ const handleDeclineEmployee = async (requestId: string) => {
   setSelectedFilters([]); // Resets to show all projects
   setStatusFilters([]); // If needed for other tabs
 }, []);
+  const alignContainerRef = useRef<HTMLDivElement>(null);
+  const navStartRef = useRef<HTMLDivElement>(null);
+  const [tableStart, setTableStart] = useState(0);
+
+  const updateTableStart = useCallback(() => {
+    const container = alignContainerRef.current;
+    const nav = navStartRef.current;
+    if (!container || !nav) return;
+    const firstTab = nav.querySelector<HTMLElement>("[data-nav-start]");
+    const startEl = firstTab ?? nav;
+    const offset =
+      startEl.getBoundingClientRect().left - container.getBoundingClientRect().left;
+    setTableStart(Math.max(0, Math.round(offset)));
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(updateTableStart);
+    const container = alignContainerRef.current;
+    const nav = navStartRef.current;
+    if (!container) {
+      return () => cancelAnimationFrame(frame);
+    }
+    const ro = new ResizeObserver(updateTableStart);
+    ro.observe(container);
+    if (nav) ro.observe(nav);
+    window.addEventListener("resize", updateTableStart);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+      window.removeEventListener("resize", updateTableStart);
+    };
+  }, [updateTableStart, loading, activeTab, width]);
+
   const isXXS = width <= 480;
   const isXS = width > 480 && width <= 640;
   const isSM = width > 640 && width <= 768;
@@ -884,20 +917,45 @@ const handleDeclineEmployee = async (requestId: string) => {
         }`}
       >
         
-        <div className={`${isXXS || isXS || isSM || isMD ? "w-fit" : "w-full"} flex items-center flex-col space-y-4 overflow-x-auto`}>
-          <div className="w-fit flex space-x-10">
+        <div className={`${isXXS || isXS || isSM || isMD ? "w-fit overflow-x-auto" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+          <div className="w-full flex justify-center items-center">
+            <div className="w-fit flex items-center space-x-10">
             {(isXXS || isXS || isSM || isMD) && (
           <div>
             <TbFilterBolt size={25} onClick={() => setShowFilter(true)} />
           </div>
         )}
           <MainSearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+            </div>
           </div>
-          <div className="flex w-full">
-                    {(activeTab === "All Projects" || activeTab === "Verify Employee" || activeTab === "Employees" || activeTab === "Security Keys") && (
-          <>
-            {(isXXS || isXS || isSM || isMD) ? (
-              renderDrawer && (
+          <div
+            ref={alignContainerRef}
+            className={
+              isXXS || isXS || isSM || isMD
+                ? "flex w-full flex-col items-center"
+                : "w-full flex flex-col overflow-visible"
+            }
+          >
+          <div
+            ref={navStartRef}
+            className="w-full flex justify-center overflow-visible relative z-10"
+          >
+          <Navigation1 
+  tabs={tabs} 
+  activeTab={activeTab} 
+  setActiveTab={(tab) => {
+    setActiveTab(tab);
+    localStorage.setItem("headProjectListActiveTab", tab);
+  }} 
+  totalUnreadAll={totalUnread} 
+  totalPendingVerify={pendingVerifyCount}
+  centered
+/>
+          </div>
+          <div className={`relative flex w-full items-start mt-7`}>
+          {(activeTab === "All Projects" || activeTab === "Verify Employee" || activeTab === "Employees" || activeTab === "Security Keys") && (
+            (isXXS || isXS || isSM || isMD)
+              ? renderDrawer && (
                 <div
                   className={`
                     fixed top-9 left-0 w-[280px] z-50 bg-blue-50 p-4 rounded-br-[10px]
@@ -914,8 +972,8 @@ const handleDeclineEmployee = async (requestId: string) => {
                   />
                 </div>
               )
-            ) : (
-              <div className="w-[25%]">
+              : (
+              <div className="absolute left-0 top-4 [&>div]:mx-0">
                 <Filter
                   filters={activeTab === "All Projects" ? projectFilters : activeTab === "Employees" ? departmentFilters : activeTab === "Verify Employee" ? statusFilterOptions : keyFilters}
                   setClose={setShowFilter}
@@ -924,30 +982,23 @@ const handleDeclineEmployee = async (requestId: string) => {
                 onClear={handleClearFilters}
                 />
               </div>
-            )}
-          </>
-        )}
-        <div className={`flex  ${isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%]"}  flex-col`}>
-          
-          <div className={` ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"}  `}>
-            
-          <Navigation1 
-  tabs={tabs} 
-  activeTab={activeTab} 
-  setActiveTab={(tab) => {
-    setActiveTab(tab);
-    localStorage.setItem("headProjectListActiveTab", tab);
-  }} 
-  totalUnreadAll={totalUnread} 
-  totalPendingVerify={pendingVerifyCount}
-/>
-          
-          </div>
-          
-          {/* data0 */}
+              )
+          )}
+          <div
+            className={
+              isXXS || isXS || isSM || isMD
+                ? "flex w-full flex-col"
+                : "w-full min-w-0"
+            }
+            style={
+              isXXS || isXS || isSM || isMD
+                ? undefined
+                : { paddingLeft: tableStart }
+            }
+          >
           <div className={`flex  w-full gap-x-5 items-start shrink-0 flex-row`}>
         <div
-          className={`flex mt-7 flex-col ${
+          className={`flex flex-col ${
             isXXS || isXS || isSM || isMD
               ? "w-full flex"
               : "w-full"
@@ -978,7 +1029,7 @@ const handleDeclineEmployee = async (requestId: string) => {
                   text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
                   value={item.workstream}
                 />
-                <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
+                <div className="flex items-center gap-2 pl-2.5 py-0.5">
   <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
     ID:{item.project_id}
   </span>
@@ -1076,7 +1127,7 @@ const handleDeclineEmployee = async (requestId: string) => {
   className={`${textColor} w-[20%] ${textSize} flex flex-col items-center justify-center`}
 >
   <CircularProgress progress={item.progress} />
-  <div>{item.progress}% Completed</div>
+  {/* <div>{item.progress}% Completed</div> */}
 </div>
               <div
                 className={`${textColor} w-[20%] space-y-1 font-normal text-[12px] -tracking-[0.02rem]`}
@@ -1089,7 +1140,7 @@ const handleDeclineEmployee = async (requestId: string) => {
         );
       })
     ) : (
-                <div className={`flex flex-col items-center justify-center py-12 ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} text-center`}>
+                <div className="flex flex-col items-center justify-center py-12 text-center">
   {/* Modern, subtle icon */}
 <FaRegFolder size={40} color="gray" />
   
@@ -1175,7 +1226,7 @@ const handleDeclineEmployee = async (requestId: string) => {
                   </div>
                 ))
               ) : (
-                <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                <div className="mt-7 flex flex-col items-center justify-center">
   <div className="bg-white p-3 rounded-full shadow-sm mb-4">
     <IoKeyOutline color="gray" size={40} />
   </div>
@@ -1265,7 +1316,7 @@ const handleDeclineEmployee = async (requestId: string) => {
                   </div>
                 ))
               ) : (
-                <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                <div className="mt-7 flex flex-col items-center justify-center">
   <div className="bg-white p-3 rounded-full shadow-sm mb-4">
     <FaUsers color="gray" size={40} />
   </div>
@@ -1318,13 +1369,14 @@ const handleDeclineEmployee = async (requestId: string) => {
           </div>
           </div>
           </div>
+          </div>
         </div>
       </div>
       
 
       
       {activeTab !== "Employees" && (
-        <div className="mt-8">
+        <div className="mt-8 w-full flex justify-center">
           <PaginationNav
             total={totalPages}
             current={currentPage}

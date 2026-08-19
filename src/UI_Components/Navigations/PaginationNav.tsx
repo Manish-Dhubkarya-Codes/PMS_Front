@@ -21,6 +21,7 @@ const PaginationNav: React.FC<PaginationNavProps> = ({ total, current, onPageCha
   };
 
   return (
+    <div className="w-full flex justify-center">
     <div className="flex items-center select-none justify-center space-x-3 bg-[#e6e6e6] border border-black px-5 py-1.5 rounded-full w-fit">
       <IoMdArrowDropleft
         onClick={handlePrev}
@@ -35,6 +36,7 @@ const PaginationNav: React.FC<PaginationNavProps> = ({ total, current, onPageCha
         className={`cursor-pointer ${current === total ? 'opacity-50 cursor-not-allowed' : ''}`}
         size={20}
       />
+    </div>
     </div>
   );
 };

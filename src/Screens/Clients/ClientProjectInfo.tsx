@@ -2098,12 +2098,12 @@ const handleSendMessage = async (
 
   return (
     <div
-      className={`flex flex-col w-full text-black ${isLG
-          ? "px-16 py-20 overflow-y-auto min-h-screen justify-center"
+      className={`flex flex-col w-full text-black min-h-screen justify-center items-center relative overflow-y-auto ${isLG
+          ? "px-16 py-20"
           : isXL || is2XL
-            ? "px-24 min-h-screen overflow-y-auto py-20 justify-center"
+            ? "px-24 py-20"
             : "px-4 py-26"
-        } items-center relative`}
+        }`}
     >
       <MainNavigation isMenuHide={false} />
 

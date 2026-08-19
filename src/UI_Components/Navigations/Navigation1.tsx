@@ -13,6 +13,7 @@ interface TabsProps {
   totalUnreadRequested?: number;
   totalUnreadCompleted?: number;
   totalPendingVerify?: number;
+  centered?: boolean;
 }
 
 const Navigation1: React.FC<TabsProps> = ({ 
@@ -27,10 +28,11 @@ const Navigation1: React.FC<TabsProps> = ({
   totalUnreadAccepted,
   totalUnreadRequested,
   totalUnreadCompleted,
-  totalPendingVerify
+  totalPendingVerify,
+  centered = false
 }) => {
   return (
-    <div className="w-full py-2 px-4 overflow-x-auto no-scrollbar">
+    <div className={`${centered ? "w-max mx-auto py-2 px-0 flex justify-center overflow-visible" : "w-full py-3 pl-8 pr-4 overflow-x-auto overflow-y-visible"} no-scrollbar`}>
       <div
         className="inline-flex pl-2"
         style={{ transform: "rotate(0.2deg)" }}
@@ -65,6 +67,7 @@ const Navigation1: React.FC<TabsProps> = ({
           return (
             <div
               key={tab}
+              data-nav-start={index === 0 ? "true" : undefined}
               onClick={() => setActiveTab(tab)}
               className={`relative font-dmsans text-black flex items-center justify-center border-[1.5px] border-[#2C6BC1]
                 cursor-pointer select-none rounded-l-md rounded-r-md whitespace-nowrap

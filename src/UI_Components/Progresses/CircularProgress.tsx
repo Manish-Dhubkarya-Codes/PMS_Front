@@ -8,8 +8,8 @@ interface CircularProgressProps {
 
 const CircularProgress: React.FC<CircularProgressProps> = ({
   progress,
-  size = 63,
-  strokeWidth = 10,
+  size = 58,
+  strokeWidth = 5.8,
 }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -20,8 +20,8 @@ const CircularProgress: React.FC<CircularProgressProps> = ({
       <svg width={size} height={size} className="transform -rotate-90">
         <defs>
           <linearGradient id="gradientStroke" x1="0%" y1="100%" x2="10%" y2="0%">
-            <stop offset="0%" stopColor="#4e12ef" />
-            <stop offset="100%" stopColor="#7142f0" />
+            <stop offset="0%" stopColor="#976EFF" />
+            <stop offset="100%" stopColor="#4e12ef" />
           </linearGradient>
         </defs>
 

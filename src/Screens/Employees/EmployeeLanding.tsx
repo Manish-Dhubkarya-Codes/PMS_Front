@@ -907,7 +907,7 @@ onClick={() => {
         </div>
       </div>
       {activeTab !== tabs[4] && (
-        <div className="mt-8">
+        <div className="mt-8 w-full flex justify-center">
           <PaginationNav
             total={totalPages}
             current={currentPage}
