@@ -139,7 +139,7 @@ const handleDeclineClick = () => {
     <div className="flex items-start relative" style={{ cursor: "pointer" }}>
       {/* Dropdown Menu */}
 {(onRemoveEmployee || isTeamLeader || onRemoveAsTL || onPromoteToTL) && (
-  <div className="absolute -top-1 left-25 z-20">
+  <div className="absolute -top-1 left-20 z-20">
     <div
       className="
         w-8 h-8

@@ -68,14 +68,17 @@ const getDateTime = (value?: string | number | null) => {
   return Number.isNaN(t) ? 0 : t;
 };
 
-const sortByLatestDate = <T extends { created_at?: string; id?: string }>(a: T, b: T) => {
+const sortByLatestDate = <T extends { created_at?: string; id?: string; key_id?: string }>(a: T, b: T) => {
   const aTime = getDateTime(a.created_at);
   const bTime = getDateTime(b.created_at);
   if (aTime !== bTime) return bTime - aTime;
-  const aId = Number(a.id);
-  const bId = Number(b.id);
+
+  // Registrations use `id`, while security keys use `key_id`.
+  // This makes the order deterministic when creation timestamps are equal.
+  const aId = Number(a.id ?? a.key_id);
+  const bId = Number(b.id ?? b.key_id);
   if (!Number.isNaN(aId) && !Number.isNaN(bId) && (aId || bId)) return bId - aId;
-  return 0;
+  return String(b.key_id ?? b.id ?? "").localeCompare(String(a.key_id ?? a.id ?? ""));
 };
 const HeadProjectList: React.FC = () => {
   const navigate = useNavigate();

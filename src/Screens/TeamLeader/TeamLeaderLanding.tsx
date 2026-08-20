@@ -413,7 +413,14 @@ useEffect(() => {
 
   const activeIds = new Set(
     projectDetails
-      .filter((p) => p.status === "Active")
+      .filter((p) =>
+        p.status === "Active" &&
+        !requests.some(
+          (request) =>
+            String(request.project_id) === String(p.project_id) &&
+            ["pending", "accepted", "TLAssign"].includes(request.status || "")
+        )
+      )
       .map((p) => '' + p.project_id)
   );
 
@@ -747,9 +754,9 @@ useEffect(() => {
     return () => off?.();
   }, [onEvent, fetchUnreadInfo, department]);
 
-  // Listen for employee registration updates
+  // Keep the verification list in sync with registrations verified elsewhere.
   useEffect(() => {
-    if (department !== "Technical") return;
+    if (department !== "Technical" || !connected) return;
 
     const handleEmployeeRegUpdate = (data: { id: string; status: 'pending' | 'accepted' | 'rejected' }) => {
       setEmployeeRegRequests((prev) =>
@@ -764,21 +771,34 @@ useEffect(() => {
     const off = onEvent("employeeRegUpdate", handleEmployeeRegUpdate);
 
     return () => off?.();
-  }, [onEvent, department]);
+  }, [connected, onEvent, department]);
 
   useEffect(() => {
-  if (department !== "Technical") return;
+  if (department !== "Technical" || !connected) return;
 
   const handleNewEmployeeRegistration = (data: EmployeeRegRequest) => {
     setEmployeeRegRequests((prev) => {
       if (prev.some((item) => item.id === data.id)) return prev;
       return [data, ...prev].sort(sortByLatestDate);
     });
+    // Fetch the canonical list so the TL receives every backend field and status.
+    fetchEmployees();
   };
 
   const offReg = onEvent("newEmployeeRegistration", handleNewEmployeeRegistration);
   return () => offReg?.();
-}, [onEvent, department]);
+}, [connected, onEvent, department, fetchEmployees]);
+
+  // Match HeadProjectList: refresh immediately and then keep Verify Employee live
+  // while the tab is open, including updates that may have been emitted before a
+  // socket reconnect.
+  useEffect(() => {
+    if (department !== "Technical" || activeTab !== "Verify Employee") return;
+
+    fetchEmployees();
+    const interval = window.setInterval(fetchEmployees, 15000);
+    return () => window.clearInterval(interval);
+  }, [department, activeTab, fetchEmployees]);
 
   // Listen for project status updates (both event names — backend emits projectStatusUpdated)
   useEffect(() => {
@@ -960,7 +980,6 @@ useEffect(() => {
       .filter((item) => item.status === "pending" || item.status === "accepted" || item.status === "TLAssign")
       .map((item) => String(item.project_id))
   );
-  console.log(requestedProjectIds);
   
 
   const groupedPendingRequests = requests
@@ -1023,6 +1042,7 @@ const filteredItems =
     ? activeTab === "Active"
       ? projectDetails.filter((item: ProjectListProps) =>
           item.status === "Active" &&
+          !requestedProjectIds.has(String(item.project_id)) &&
           (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1378,31 +1398,7 @@ const filteredItems =
           <MainSearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         </div>
       </div>
-      <div className="flex w-full flex-col">
-        <div className="flex w-full items-start">
-          {!(isXXS || isXS || isSM || isMD) && <div className="w-[25%] shrink-0" />}
-          <div
-            className={`items-center flex overflow-visible ${isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%] justify-start"
-              }`}
-          >
-            <div className={`w-full overflow-visible ${isXXS || isXS || isSM || isMD || department === "Technical" ? "" : "mr-[29%]"}`}>
-            <Navigation1
-  tabs={tabs}
-  activeTab={activeTab}
-  setActiveTab={(tab) => {
-    setActiveTab(tab);
-    localStorage.setItem("tlLandingActiveTab", tab);
-  }}
-  totalUnreadActive={totalUnreadActive}
-  totalUnreadOngoing={totalUnreadOngoing}
-  totalUnreadAssigned={totalUnreadAssigned}
-  totalUnreadRequests={totalUnreadRequests}
-  totalPendingVerify={totalPendingVerify}
-/>
-            </div>
-          </div>
-        </div>
-      <div className="flex w-full gap-x-5 items-start">
+      <div className="flex w-full gap-x-5 items-start shrink-0 flex-row">
         {isXXS || isXS || isSM || isMD ? (
           renderDrawer && (
             <div
@@ -1420,7 +1416,7 @@ const filteredItems =
             </div>
           )
         ) : (
-          <div className="w-[25%] shrink-0 mt-7">
+          <div className="w-[25%] mt-2 shrink-0">
             <Filter
               filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
               setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
@@ -1429,9 +1425,31 @@ const filteredItems =
           </div>
         )}
         <div
-          className={`flex flex-col min-w-0 ${isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%]"
-            }`}
+          className={`flex flex-col min-w-0 ${
+            isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%]"
+          }`}
         >
+          <div
+            className={`items-center flex ${
+              isXXS || isXS || isSM || isMD ? "w-full" : "justify-start w-full"
+            }`}
+          >
+            <div className={`w-full ${isXXS || isXS || isSM || isMD ? "" : "mr-[24%]"}`}>
+              <Navigation1
+                tabs={tabs}
+                activeTab={activeTab}
+                setActiveTab={(tab) => {
+                  setActiveTab(tab);
+                  localStorage.setItem("tlLandingActiveTab", tab);
+                }}
+                totalUnreadActive={totalUnreadActive}
+                totalUnreadOngoing={totalUnreadOngoing}
+                totalUnreadAssigned={totalUnreadAssigned}
+                totalUnreadRequests={totalUnreadRequests}
+                totalPendingVerify={totalPendingVerify}
+              />
+            </div>
+          </div>
           <div className={activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"}>
             {department === "Technical" ? (
               activeTab === "Requests" ? (
@@ -2666,7 +2684,6 @@ const filteredItems =
             )}
           </div>
         </div>
-      </div>
       </div>
       <div className="mt-8 w-full flex justify-center">
         <PaginationNav
