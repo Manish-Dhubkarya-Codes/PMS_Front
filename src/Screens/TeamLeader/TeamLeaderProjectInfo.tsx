@@ -44,6 +44,7 @@ import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
 import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
 import {
   buildChatFilePayload,
+  formatChatTime,
   normalizeMimeType,
 } from "../../FileSendUI/chatFileUtils";
 import {
@@ -2445,14 +2446,7 @@ useEffect(() => {
                         {msg.edited && (
                           <span className="text-[10px] text-amber-500 mr-1 italic">edited</span>
                         )}
-                        {new Date(msg.timestamp).toLocaleTimeString(
-                          "en-IN",
-                          {
-                            hour: "numeric",
-                            minute: "2-digit",
-                            hour12: true,
-                          }
-                        )}
+                        {formatChatTime(msg.timestamp)}
                         {!msg.isLeft && msg.fromTeamLeader && (
                           <span className="inline-flex items-center">
                             <IoCheckmarkDoneSharp

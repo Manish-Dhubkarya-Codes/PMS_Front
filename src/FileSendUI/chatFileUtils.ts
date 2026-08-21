@@ -55,6 +55,17 @@ export function normalizeMimeType(
   return "application/octet-stream";
 }
 
+export function formatChatTime(timestamp?: string | Date | null): string {
+  if (!timestamp) return "";
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 export function isChatAudioFile(
   type?: string | null,
   name?: string | null,

@@ -53,7 +53,7 @@ import {
   appendLocalFileMessage,
   mergeIncomingChatMessage,
 } from "../../FileSendUI/chatMessageMerge";
-import { emitChatFileMessage } from "../../FileSendUI/chatFileUtils";
+import { emitChatFileMessage, formatChatTime } from "../../FileSendUI/chatFileUtils";
 import {
   dedupeLoadedMessages,
   isLeftForViewer,
@@ -3174,14 +3174,7 @@ const HeadClientProjectInfo: React.FC = () => {
                                         edited
                                       </span>
                                     )}
-                                    {new Date(msg.timestamp).toLocaleTimeString(
-                                      "en-IN",
-                                      {
-                                        hour: "numeric",
-                                        minute: "2-digit",
-                                        hour12: true,
-                                      },
-                                    )}
+                                    {formatChatTime(msg.timestamp)}
                                     {!msg.isLeft && (
                                       <span className="inline-flex items-center">
                                         <IoCheckmarkDoneSharp

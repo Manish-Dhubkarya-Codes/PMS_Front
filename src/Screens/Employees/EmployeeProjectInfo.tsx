@@ -24,7 +24,7 @@ import {
   formatMonitorSenderLabel,
   mergeMonitorChatMessage,
 } from "../../FileSendUI/monitorChatMerge";
-import { buildChatFilePayload, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
+import { buildChatFilePayload, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
 import { readStoredUserData } from "../../utils/authStorage";
 
@@ -522,6 +522,7 @@ useEffect(() => {
             employeeData?.employeeName || "Employee",
           senderPic: parsed.senderPic || 
             (isFromTL ? tlMonitorChats.teamleaderpic : tlMonitorChats.monitorpic) || "",
+          caption: parsed.caption || undefined,
           edited: !!parsed.edited,
           editedAt: parsed.editedAt,
           isDeleted: !!parsed.isDeleted,
@@ -1649,6 +1650,11 @@ const getSenderInfo = (msg: ChatMessage) =>
               }
               return null;
             })()}
+            {msg.caption && (
+              <div className="px-3 pb-3 text-gray-800 text-[13px] break-words leading-snug border-t border-slate-100 pt-2">
+                {msg.caption}
+              </div>
+            )}
           </div>
         )}
     </>
@@ -1662,7 +1668,7 @@ const getSenderInfo = (msg: ChatMessage) =>
     {msg.edited && !msg.isDeleted && (
       <span className="text-[10px] text-amber-500 mr-1 italic">edited</span>
     )}
-    {new Date(msg.timestamp).toLocaleTimeString("en-IN")}
+    {formatChatTime(msg.timestamp)}
     {!msg.isLeft && (
       <span className="inline-flex items-center ml-1">
         <IoCheckmarkDoneSharp
@@ -1865,6 +1871,7 @@ const getSenderInfo = (msg: ChatMessage) =>
     setNewMessage("");
   }}
   projectId={projectDetails?.project_id || item?.project_id}
+  allowedFileTypes={["*/*"]}
 />
               </div>
               </div>

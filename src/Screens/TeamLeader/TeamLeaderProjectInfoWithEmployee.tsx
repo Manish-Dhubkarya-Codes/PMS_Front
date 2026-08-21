@@ -43,7 +43,7 @@ import {
   mergeMonitorChatMessage,
   // absoluteMonitorFileUrl,
 } from "../../FileSendUI/monitorChatMerge";
-import { normalizeMimeType } from "../../FileSendUI/chatFileUtils";
+import { buildChatFilePayload, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -525,6 +525,7 @@ useEffect(() => {
             parsed.senderPic ||
             (isFromTL ? tlMonitorChats.teamleaderpic : tlMonitorChats.monitorpic) ||
             "",
+          caption: parsed.caption || undefined,
           edited: !!parsed.edited,          // force boolean
           editedAt: parsed.editedAt || undefined,
           isDeleted: !!parsed.isDeleted,    // force boolean
@@ -536,11 +537,11 @@ useEffect(() => {
         } else if (parsed.data) {
           msg.file = parsed.isDeleted
             ? undefined
-            : {
+            : buildChatFilePayload({
                 name: parsed.data.name,
-                url: `${serverURL}${parsed.data.url}`,
+                url: parsed.data.url,
                 type: parsed.data.type,
-              };
+              }).file;
         }
 
         allMessages.push(msg);
@@ -993,19 +994,19 @@ const handleSendMessage = async (
   }
 };
 
-    const getReadableFileType = (type?: string) => {
-    if (!type) return "FILE";
-    if (type === "application/pdf") return "PDF";
+    const getReadableFileType = (type?: string, name?: string) => {
+    const fileType = normalizeMimeType(type, name);
+    if (isChatAudioFile(fileType, name)) return "AUDIO";
+    if (fileType === "application/pdf") return "PDF";
     if (
-      type === "application/msword" ||
-      type ===
+      fileType === "application/msword" ||
+      fileType ===
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
       return "DOC";
-    if (type === "application/zip") return "ZIP";
-    if (type.startsWith("audio/")) return "AUDIO";
-    if (type.startsWith("video/")) return "VIDEO";
-    if (type.startsWith("image/")) return "IMAGE";
+    if (fileType === "application/zip") return "ZIP";
+    if (fileType.startsWith("video/")) return "VIDEO";
+    if (fileType.startsWith("image/")) return "IMAGE";
     return "FILE";
   };
 
@@ -1757,15 +1758,17 @@ const getSenderInfo = (msg: ChatMessage) =>
         <div
           ref={index === msgControl ? divRef : null}
           onClick={() => setMsgControl(msgControl === index ? null : index)}
-          className="group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985]"
+          className={`group relative mt-1 h-fit shadow-sm shadow-amber-200 max-w-[300px] cursor-pointer rounded-xl border border-slate-200 bg-white transition-all duration-300 ease-out hover:border-slate-400 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] active:scale-[0.985] ${
+            isChatAudioFile(msg.file.type, msg.file.name) ? "overflow-visible" : "overflow-hidden"
+          }`}
         >
           <div className="flex items-center gap-3 px-3 py-2">
             {(() => {
-              const fileType = msg.file.type;
+              const fileType = normalizeMimeType(msg.file.type, msg.file.name);
               let Icon = FaFileInvoice;
               let color = "text-slate-600";
 
-              if (fileType.startsWith("audio/")) { Icon = FaFileAudio; color = "text-orange-500"; }
+              if (isChatAudioFile(fileType, msg.file.name)) { Icon = FaFileAudio; color = "text-orange-500"; }
               else if (fileType.startsWith("image/")) { Icon = FaFileImage; color = "text-emerald-500"; }
               else if (fileType.startsWith("video/")) { Icon = FaFileVideo; color = "text-violet-500"; }
               else if (fileType === "application/pdf") { Icon = FaFilePdf; color = "text-rose-500"; }
@@ -1782,16 +1785,16 @@ const getSenderInfo = (msg: ChatMessage) =>
 
             <div className="flex-1 min-w-0">
               <p className="truncate text-[13px] font-medium text-slate-800">{msg.file.name}</p>
-              <p className="text-[10px] uppercase tracking-wide text-slate-400">{getReadableFileType(msg.file.type)}</p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-400">{getReadableFileType(msg.file.type, msg.file.name)}</p>
             </div>
           </div>
 
           {(() => {
-            const fileType = msg.file.type;
-            const url = msg.file.url.startsWith("blob:") ? msg.file.url : `${msg.file.url}`;
             const name = msg.file.name;
+            const fileType = normalizeMimeType(msg.file.type, name);
+            const url = msg.file.url.startsWith("blob:") ? msg.file.url : `${msg.file.url}`;
 
-            if (fileType.startsWith("audio/")) {
+            if (isChatAudioFile(fileType, name)) {
               return <div className="px-3 py-2 border-t border-gray-200"><audio controls src={url} className="min-w-[150px] max-w-full" /></div>;
             } else if (fileType.startsWith("image/")) {
               return (
@@ -1814,6 +1817,11 @@ const getSenderInfo = (msg: ChatMessage) =>
             }
             return null;
           })()}
+          {msg.caption && (
+            <div className="px-3 pb-3 text-gray-800 text-[13px] break-words leading-snug border-t border-slate-100 pt-2">
+              {msg.caption}
+            </div>
+          )}
         </div>
       </div>
     )}
@@ -1824,7 +1832,7 @@ const getSenderInfo = (msg: ChatMessage) =>
                       {msg.edited && !msg.isDeleted && (
                         <span className="text-[10px] text-amber-500 mr-1 italic">edited</span>
                       )}
-                      {new Date(msg.timestamp).toLocaleTimeString("en-IN")}
+                      {formatChatTime(msg.timestamp)}
                       {!msg.isLeft && (
                         <span className="inline-flex items-center ml-1">
                           <IoCheckmarkDoneSharp size={14} color={isSeenByReceiver(msg) ? "#00B7FF" : "#000000"} className="inline-block" />
@@ -2028,6 +2036,7 @@ const getSenderInfo = (msg: ChatMessage) =>
   replyTo={replyToMessage} // NEW: Pass replyTo prop
   onCancelReply={() => setReplyToMessage(null)} // NEW: Pass cancel handler
   projectId={projectDetails?.project_id}
+  allowedFileTypes={["*/*"]}
 />
 </div>
               </div>

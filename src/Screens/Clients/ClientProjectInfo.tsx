@@ -40,6 +40,7 @@ import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
 import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
 import {
   buildChatFilePayload,
+  formatChatTime,
   normalizeMimeType,
 } from "../../FileSendUI/chatFileUtils";
 import {
@@ -2756,11 +2757,7 @@ const handleSendMessage = async (
 )}
 
                                       <div className="text-xs text-gray-500 mt-1 flex items-center justify-end gap-1">
-                                        {new Date(msg.timestamp).toLocaleTimeString("en-IN", {
-                                          hour: "numeric",
-                                          minute: "2-digit",
-                                          hour12: true,
-                                        })}
+                                        {formatChatTime(msg.timestamp)}
                                         {msg.edited && <span className="text-[10px] text-blue-500 font-medium ml-1">Edited</span>}
                                         {!msg.isLeft && (
                                           <span className="inline-flex items-center">

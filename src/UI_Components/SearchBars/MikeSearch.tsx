@@ -1520,7 +1520,7 @@ const handleSend = () => {
           ref={fileInputRef}
           onChange={handleFileChange}
           className="hidden"
-          accept={allowedFileTypes.join(",")}
+          accept={allowedFileTypes.includes("*/*") ? undefined : allowedFileTypes.join(",")}
           multiple
         />
       </div>
