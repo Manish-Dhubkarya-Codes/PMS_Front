@@ -9,6 +9,7 @@ import { persistAuthSession } from "../../utils/authStorage";
 import { FaInfoCircle } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../Authentication/AuthContext";
+import LightningBorder from "../../UI_Components/Pop_Ups/LightningBorder";
 
 interface FormData {
   name: string;
@@ -354,9 +355,8 @@ const handleRequestReset = async () => {
       {/* Original backdrop */}
       <div className="absolute inset-0 bg-white/20 backdrop-blur-sm z-40" />
 
-      {/* Modal with EXACT original scale-y animation + compact blue design */}
-      <div className={`relative z-50 w-full max-w-md overflow-hidden rounded-3xl shadow-2xl origin-top transition-all duration-500 ease-in-out ${animationClass}`}>
-        <div className="relative w-full bg-white rounded-3xl p-7">
+      <LightningBorder className={`relative z-50 w-full max-w-xl origin-top transition-all duration-500 ease-in-out ${animationClass}`}>
+        <div className="relative w-full p-7">
           {/* Header */}
           <div className="flex justify-between items-center pb-5 border-b border-slate-100">
             <div className="text-2xl font-bold uppercase italic tracking-tight bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
@@ -370,7 +370,16 @@ const handleRequestReset = async () => {
           <div className="space-y-5 mt-6">
             {/* ==================== LOGIN MODE ==================== */}
             {forgotMode === 'login' && (
-              <>
+              <form
+                onSubmit={(e) => e.preventDefault()}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  if ((e.target as HTMLElement).tagName === "TEXTAREA") return;
+                  e.preventDefault();
+                  if (!isLoading) handleSubmit();
+                }}
+                className="space-y-5"
+              >
                 {/* Role */}
                 <div>
                   <label className="text-sm font-semibold text-start text-slate-700 block mb-1">Role*</label>
@@ -497,84 +506,87 @@ const handleRequestReset = async () => {
                   </>
                 )}
 
-                {/* Submit Button - Original sliding style */}
                 <div
                   onClick={!isLoading ? handleSubmit : undefined}
-                  className={`relative overflow-hidden mb-3 w-full py-3 rounded-md text-[12px] font-bold uppercase tracking-widest text-center transition-all duration-300 shadow-md
-                  ${isLoading ? "cursor-not-allowed border border-blue-400 text-blue-400" : "cursor-pointer border border-blue-600 text-blue-600 group"}`}
+                  className={`bg-blue-600 mb-3 hover:bg-blue-700 transition-all duration-300 w-full rounded-md text-[12px] font-bold uppercase tracking-widest text-white py-3 text-center shadow-md shadow-blue-200 ${
+                    isLoading ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+                  }`}
                 >
-                  {!isLoading && (
-                    <span className="absolute inset-0 bg-blue-600 w-0 group-hover:w-full transition-all duration-500 ease-out z-0" />
-                  )}
-                  <span className="relative z-10 flex items-center justify-center gap-2 group-hover:text-white transition-colors duration-300">
-                    {isLoading ? (
-                      <>
-                        <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent animate-spin rounded-full" />
-                        LOGGING IN...
-                      </>
-                    ) : (
-                      "Sign In"
-                    )}
-                  </span>
+                  {isLoading ? "LOGGING IN..." : "Sign In"}
                 </div>
-              </>
+              </form>
             )}
 
-            {/* ==================== FORGOT PASSWORD MODES ==================== */}
-{forgotMode === 'confirm' && (
-  <div className="py-2">
-    <div className="text-center mb-6">
-      <div className="mx-auto w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center mb-3">
-        <FaInfoCircle className="text-blue-600" size={24} />
-      </div>
-      <h3 className="text-lg font-semibold text-slate-800">Forgot Password</h3>
-      <p className="text-sm text-slate-600 mt-2">Enter your registered email address</p>
-    </div>
+            {forgotMode === 'confirm' && (
+              <form
+                className="py-2"
+                onSubmit={(e) => e.preventDefault()}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  if (!isLoading && resetEmail) handleRequestReset();
+                }}
+              >
+                <div className="text-center mb-6">
+                  <div className="mx-auto w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center mb-3">
+                    <FaInfoCircle className="text-blue-600" size={24} />
+                  </div>
+                  <h3 className="text-lg font-semibold text-slate-800">Forgot Password</h3>
+                  <p className="text-sm text-slate-600 mt-2">Enter your registered email address</p>
+                </div>
 
-    <div className="mb-5">
-      <label className="text-sm font-semibold text-slate-700 block mb-1">Email ID*</label>
-      <div className="w-full p-[2px] rounded-[6px] bg-gradient-to-r from-blue-100 to-blue-200 focus-within:from-blue-500 focus-within:to-blue-600">
-        <input
-          type="email"
-          value={resetEmail}
-          onChange={(e) => {
-            setResetEmail(e.target.value);
-            if (resetError) setResetError(null);
-          }}
-          placeholder="Enter your registered email"
-          className="w-full px-4 py-2 text-[14px] rounded-[6px] bg-white text-slate-800 outline-none"
-        />
-      </div>
-    </div>
+                <div className="mb-5">
+                  <label className="text-sm font-semibold text-slate-700 block mb-1">Email ID*</label>
+                  <div className="w-full p-[2px] rounded-[6px] bg-gradient-to-r from-blue-100 to-blue-200 focus-within:from-blue-500 focus-within:to-blue-600">
+                    <input
+                      type="email"
+                      value={resetEmail}
+                      onChange={(e) => {
+                        setResetEmail(e.target.value);
+                        if (resetError) setResetError(null);
+                      }}
+                      placeholder="Enter your registered email"
+                      className="w-full px-4 py-2 text-[14px] rounded-[6px] bg-white text-slate-800 outline-none"
+                    />
+                  </div>
+                </div>
 
-    {resetError && <p className="text-red-500 text-xs text-center mb-3">{resetError}</p>}
+                {resetError && <p className="text-red-500 text-xs text-center mb-3">{resetError}</p>}
 
-    <div className="flex gap-3">
-      <div
-        onClick={() => setForgotMode('login')}
-        className="flex-1 py-2.5 text-sm font-medium border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
-      >
-        Cancel
-      </div>
-      <div
-  onClick={(e) => {
-    if (isLoading || !resetEmail) return;
-    handleRequestReset(e);
-  }}
-  className={`flex-1 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg ${
-    isLoading || !resetEmail
-      ? 'opacity-70 cursor-not-allowed'
-      : 'cursor-pointer'
-  }`}
->
-  {isLoading ? 'SENDING...' : 'Send OTP'}
-</div>
-    </div>
-  </div>
-)}
+                <div className="flex gap-3">
+                  <div
+                    onClick={() => setForgotMode('login')}
+                    className="flex-1 cursor-pointer py-2.5 text-sm font-medium border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-center"
+                  >
+                    Cancel
+                  </div>
+                  <div
+                    onClick={() => {
+                      if (isLoading || !resetEmail) return;
+                      handleRequestReset();
+                    }}
+                    className={`flex-1 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-center ${
+                      isLoading || !resetEmail
+                        ? "opacity-70 cursor-not-allowed"
+                        : "cursor-pointer"
+                    }`}
+                  >
+                    {isLoading ? "SENDING..." : "Send OTP"}
+                  </div>
+                </div>
+              </form>
+            )}
 
             {forgotMode === 'otp' && (
-              <div className="py-2">
+              <form
+                className="py-2"
+                onSubmit={(e) => e.preventDefault()}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  if (!isLoading && resetOtp.length === 6) handleVerifyOtp();
+                }}
+              >
                 <div className="text-center mb-5">
                   <h3 className="font-semibold text-slate-800">Enter OTP</h3>
                   <p className="text-xs text-slate-500 mt-1">Check your email for the 6-digit code</p>
@@ -596,40 +608,43 @@ const handleRequestReset = async () => {
                 </div>
                 {resetError && <p className="text-red-500 text-xs text-center mt-3">{resetError}</p>}
                 <div
-  onClick={(e) => {
-    if (isLoading || resetOtp.length !== 6) {
-      e.preventDefault();
-      return;
-    }
-
-    handleVerifyOtp();
-  }}
-  className={`mt-5 w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white transition flex items-center justify-center gap-2 ${
-    isLoading || resetOtp.length !== 6
-      ? 'bg-blue-400 cursor-not-allowed'
-      : 'hover:bg-blue-700 cursor-pointer'
-  }`}
->
-  {isLoading ? (
-    <>
-      VERIFYING
-      <span className="animate-spin w-4 h-4 border-2 border-white/70 border-t-white rounded-full" />
-    </>
-  ) : (
-    'VERIFY OTP'
-  )}
-</div>
-              </div>
+                  onClick={() => {
+                    if (isLoading || resetOtp.length !== 6) return;
+                    handleVerifyOtp();
+                  }}
+                  className={`mt-5 w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white transition flex items-center justify-center gap-2 ${
+                    isLoading || resetOtp.length !== 6
+                      ? "bg-blue-400 cursor-not-allowed"
+                      : "hover:bg-blue-700 cursor-pointer"
+                  }`}
+                >
+                  {isLoading ? (
+                    <>
+                      VERIFYING
+                      <span className="animate-spin w-4 h-4 border-2 border-white/70 border-t-white rounded-full" />
+                    </>
+                  ) : (
+                    "VERIFY OTP"
+                  )}
+                </div>
+              </form>
             )}
 
             {forgotMode === 'newPassword' && (
-              <div className="py-1">
+              <form
+                className="py-1"
+                onSubmit={(e) => e.preventDefault()}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  if (!isLoading) handleResetPassword();
+                }}
+              >
                 <div className="text-center mb-4">
                   <h3 className="font-semibold text-slate-800">Create New Password</h3>
                   <p className="text-xs text-slate-500">Must be at least 6 characters</p>
                 </div>
 
-                {/* New Password */}
                 <div className="mb-4">
                   <label className="text-sm font-semibold text-slate-700 block mb-1">New Password*</label>
                   <div className="w-full p-[2px] rounded-[6px] bg-gradient-to-r from-blue-100 to-blue-200 focus-within:from-blue-500 focus-within:to-blue-600 relative">
@@ -646,7 +661,6 @@ const handleRequestReset = async () => {
                   </div>
                 </div>
 
-                {/* Confirm New Password */}
                 <div className="mb-5">
                   <label className="text-sm font-semibold text-slate-700 block mb-1">Confirm New Password*</label>
                   <div className="w-full p-[2px] rounded-[6px] bg-gradient-to-r from-blue-100 to-blue-200 focus-within:from-blue-500 focus-within:to-blue-600">
@@ -662,28 +676,28 @@ const handleRequestReset = async () => {
 
                 {resetError && <p className="text-red-500 text-xs mb-3 text-center">{resetError}</p>}
 
-               <div
-  onClick={isLoading ? undefined : handleResetPassword}
-  className={`w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest text-white transition flex items-center justify-center gap-2 ${
-    isLoading
-      ? 'bg-blue-400 cursor-not-allowed'
-      : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
-  }`}
->
-  {isLoading ? 'RESETTING...' : 'RESET PASSWORD'}
-</div>
+                <div
+                  onClick={isLoading ? undefined : handleResetPassword}
+                  className={`w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest text-white transition flex items-center justify-center gap-2 ${
+                    isLoading
+                      ? "bg-blue-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 cursor-pointer"
+                  }`}
+                >
+                  {isLoading ? "RESETTING..." : "RESET PASSWORD"}
+                </div>
 
-<div
-  onClick={() => setForgotMode('otp')}
-  className="w-full mt-2 text-xs text-slate-500 hover:text-slate-700 py-1 cursor-pointer"
->
-  Back to OTP
-</div>
-              </div>
+                <div
+                  onClick={() => setForgotMode('otp')}
+                  className="w-full mt-2 text-xs text-slate-500 hover:text-slate-700 py-1 cursor-pointer"
+                >
+                  Back to OTP
+                </div>
+              </form>
             )}
           </div>
         </div>
-      </div>
+      </LightningBorder>
     </div>
   );
 };

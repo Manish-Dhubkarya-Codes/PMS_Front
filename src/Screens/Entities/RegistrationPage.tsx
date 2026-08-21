@@ -8,6 +8,7 @@ import { MdOutlineCloudUpload } from "react-icons/md";
 import { postData } from "../../BackendConnections/FetchBackendServices";
 import { IoMdCloseCircle } from "react-icons/io";
 import { FaInfoCircle } from "react-icons/fa";
+import LightningBorder from "../../UI_Components/Pop_Ups/LightningBorder";
 
 interface FormData {
   name: string;
@@ -502,11 +503,11 @@ const handleSubmit = async () => {
 
       <div className="absolute inset-0 bg-white/20 backdrop-blur-sm z-40" />
 
-      <div
-        className={`relative z-50 w-full max-w-lg p-7 rounded-3xl shadow-2xl border border-white/50 bg-white backdrop-blur-3xl 
-          origin-top transition-all duration-500 ease-in-out ${animationClass}`}
+      <LightningBorder
+        className={`relative z-50 w-full max-w-2xl origin-top transition-all duration-500 ease-in-out ${animationClass}`}
       >
-        <div className="flex justify-between items-center pb-5 border-b border-slate-100">
+        <div className="flex flex-col max-h-[85vh]">
+        <div className="flex justify-between items-center px-7 pt-7 pb-5 border-b border-slate-100 shrink-0">
           <div className="text-2xl font-bold uppercase italic tracking-tight bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
             {title}
           </div>
@@ -518,11 +519,20 @@ const handleSubmit = async () => {
           </div>
         </div>
 
-        <div className="space-y-5 max-h-[60vh] thin-scroll overflow-y-auto text-gray-800">
           {step === "form" ? (
-            <>
+            <form
+              className="relative flex min-h-0 flex-1 flex-col"
+              onSubmit={(e) => e.preventDefault()}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                if ((e.target as HTMLElement).tagName === "TEXTAREA") return;
+                e.preventDefault();
+                if (!isLoading) handleSubmit();
+              }}
+            >
+            <div className="space-y-5 thin-scroll overflow-y-auto text-gray-800 px-7 pt-5 pb-28 max-h-[calc(85vh-11rem)]">
               {/* Role Selection */}
-              <div className="w-[50%] mt-6">
+              <div className="w-[50%]">
                 <label className="text-sm text-start font-semibold text-gray-700 block mb-1">
                   Role*
                 </label>
@@ -875,27 +885,28 @@ const handleSubmit = async () => {
                 </div>
               )}
 
-              {/* Register Button */}
+            </div>
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-white via-white/95 to-transparent px-7 pt-12 pb-6">
               <div
                 onClick={!isLoading ? handleSubmit : undefined}
-                className={`relative overflow-hidden w-full py-3 rounded-md text-[12px] font-bold uppercase tracking-widest text-center transition-all duration-300 shadow-md border border-blue-600 text-blue-600 group
-                  ${isLoading ? "cursor-not-allowed border-blue-400 text-blue-400" : "cursor-pointer"}`}
+                className={`pointer-events-auto bg-blue-600 hover:bg-blue-700 transition-all duration-300 w-full rounded-md text-[12px] font-bold uppercase tracking-widest text-white py-3 text-center shadow-md shadow-blue-200 ${
+                  isLoading ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+                }`}
               >
-                {!isLoading && <span className="absolute inset-0 bg-blue-600 w-0 group-hover:w-full transition-all duration-500 ease-out z-0" />}
-                <span className="relative z-10 flex items-center justify-center gap-2 group-hover:text-white transition-colors duration-300">
-                  {isLoading ? (
-                    <>
-                      <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent animate-spin rounded-full" />
-                      REGISTERING...
-                    </>
-                  ) : (
-                    "Register"
-                  )}
-                </span>
+                {isLoading ? "REGISTERING..." : "Register"}
               </div>
-            </>
+            </div>
+            </form>
           ) : step === "otp" ? (
-            <div className="space-y-5 text-center">
+            <form
+              className="space-y-5 text-center px-7 py-5"
+              onSubmit={(e) => e.preventDefault()}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (!isLoading) handleVerify();
+              }}
+            >
               <div className="text-lg font-semibold text-gray-800">Enter the OTP sent to {currentEmail}</div>
 
               <div className="w-full p-[2px] rounded-[6px] bg-gradient-to-r from-blue-100 to-blue-200 focus-within:from-blue-500 focus-within:to-blue-600 transition-all">
@@ -929,24 +940,15 @@ const handleSubmit = async () => {
 
               <div
                 onClick={!isLoading ? handleVerify : undefined}
-                className={`relative overflow-hidden w-full py-3 rounded-md text-[12px] font-bold uppercase tracking-widest text-center transition-all duration-300 shadow-md border border-blue-600 text-blue-600 group
-                  ${isLoading ? "cursor-not-allowed border-blue-400 text-blue-400" : "cursor-pointer"}`}
+                className={`bg-blue-600 hover:bg-blue-700 transition-all duration-300 w-full rounded-md text-[12px] font-bold uppercase tracking-widest text-white py-3 text-center shadow-md shadow-blue-200 ${
+                  isLoading ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+                }`}
               >
-                {!isLoading && <span className="absolute inset-0 bg-blue-600 w-0 group-hover:w-full transition-all duration-500 ease-out z-0" />}
-                <span className="relative z-10 flex items-center justify-center gap-2 group-hover:text-white transition-colors duration-300">
-                  {isLoading ? (
-                    <>
-                      <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent animate-spin rounded-full" />
-                      VERIFYING...
-                    </>
-                  ) : (
-                    "Verify OTP"
-                  )}
-                </span>
+                {isLoading ? "VERIFYING..." : "Verify OTP"}
               </div>
-            </div>
+            </form>
           ) : (
-            <div className="space-y-5 text-center">
+            <div className="space-y-5 text-center px-7 py-5">
               <div className="text-lg font-semibold text-gray-800">
                 {formData.role === "Head"
                   ? "Registration completed! Check your email for the Security Key."
@@ -966,7 +968,7 @@ const handleSubmit = async () => {
             </div>
           )}
         </div>
-      </div>
+      </LightningBorder>
     </div>
   );
 };

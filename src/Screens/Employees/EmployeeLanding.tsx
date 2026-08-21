@@ -15,6 +15,7 @@ import { useSocket } from "../../BackendConnections/useSocket";
 import { MdDoNotTouch } from "react-icons/md";
 import { isQuietProjectStatus } from "../../utils/chatLive";
 import { readStoredRole, readStoredUserData } from "../../utils/authStorage";
+import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 
 interface ProjectDetailsProps {
   workstream: string;
@@ -38,6 +39,8 @@ interface ProjectRequestProps {
   deadline: string;
   description: string | string[];
   clientName: string;
+  active_date?: string | null;
+  project_status?: string | null;
 }
 
 interface AllRequestProps {
@@ -384,6 +387,17 @@ useEffect(() => {
           : project
       );
     });
+    setEmployeeRequests((prev) =>
+      prev.map((request) =>
+        String(request.project_id) === id
+          ? {
+              ...request,
+              project_status: data.status,
+              active_date: data.active_date ?? request.active_date,
+            }
+          : request
+      )
+    );
   };
 
   const handleNewEmployeeRequest = (newRequest: any) => {
@@ -564,20 +578,34 @@ const activeUnreadTotal = 0;
 
   // NEW: Live data for all tabs (Active, Requested, Accepted, Completed)
   const data = useMemo(() => {
+    const withProjectDates = <T extends { project_id: string; active_date?: string | null; status?: string; project_status?: string | null }>(
+      items: T[]
+    ) =>
+      items.map((item) => {
+        const proj = projectDetails.find((p) => String(p.project_id) === String(item.project_id));
+        return {
+          ...item,
+          active_date: item.active_date ?? proj?.active_date ?? null,
+          project_status: item.project_status ?? proj?.status ?? item.status,
+        };
+      });
+
     if (activeTab === "Active") {
       const requestedProjectIds = new Set(employeeRequests.map((r) => String(r.project_id)));
-      return projectDetails.filter((project) => 
-        !requestedProjectIds.has(String(project.project_id)) && project.status === "Active"
+      return withProjectDates(
+        projectDetails.filter((project) =>
+          !requestedProjectIds.has(String(project.project_id)) && project.status === "Active"
+        )
       );
     }
     if (activeTab === "Requested") {
-      return employeeRequests.filter((item) => item.status !== "accepted");
+      return withProjectDates(employeeRequests.filter((item) => item.status !== "accepted"));
     }
     if (activeTab === "Accepted") {
-      return employeeRequests.filter((item) => item.status === "accepted");
+      return withProjectDates(employeeRequests.filter((item) => item.status === "accepted"));
     }
     if (activeTab === "Completed") {
-      return projectDetails.filter((project) => project.status === "Completed");
+      return withProjectDates(projectDetails.filter((project) => project.status === "Completed"));
     }
     return [];
   }, [activeTab, projectDetails, employeeRequests]);
@@ -848,21 +876,10 @@ onClick={() => {
     })}
   </div>
 
-  {/* Active since */}
-  {(item as any).active_date && (item as any).status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={(item as any).active_date}
+    status={(item as any).project_status || item.status}
+  />
 </div>
                        <div
   className={`${

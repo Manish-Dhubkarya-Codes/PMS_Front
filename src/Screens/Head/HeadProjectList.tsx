@@ -21,6 +21,7 @@ import AllEmployeeList from "../Employees/AllEmployeeList";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { readStoredUserData } from "../../utils/authStorage";
+import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
 interface Project {
   title: string;
@@ -1108,22 +1109,7 @@ const handleDeclineEmployee = async (requestId: string) => {
   </div>
  
 
-  {/* Active Status */}
-  {item.active_date && item.status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px]">
-      {/* Refined Status Dot */}
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date(item.active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel activeDate={item.active_date} status={item.status} className="" />
   
 </div>
               <div

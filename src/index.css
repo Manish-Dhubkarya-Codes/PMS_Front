@@ -174,16 +174,64 @@ button:focus-visible {
 
 .snake-border {
   fill: none;
-  stroke: #2563eb;
-  stroke-width: 2.5;
+  stroke: #dbeafe;
+  stroke-width: 2.2;
   stroke-linecap: round;
+  /* Single lightning streak traveling the border */
+  stroke-dasharray: 28 372;
+  animation: borderSnake 2.6s linear infinite;
+  filter:
+    drop-shadow(0 0 1px #ffffff)
+    drop-shadow(0 0 5px #93c5fd)
+    drop-shadow(0 0 12px #2563eb)
+    drop-shadow(0 0 18px rgba(37, 99, 235, 0.75));
+}
 
-  /* EXACTLY 4 border segments */
-  stroke-dasharray: 60 40;
+.lightning-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  padding: 2px;
+  isolation: isolate;
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+}
 
-  animation: borderSnake 6s linear infinite;
+.lightning-spin {
+  position: absolute;
+  inset: -45%;
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 312deg,
+    rgba(147, 197, 253, 0.15) 328deg,
+    #93c5fd 342deg,
+    #ffffff 351deg,
+    #60a5fa 355deg,
+    #2563eb 360deg
+  );
+  animation: lightning-orbit 2.6s linear infinite;
+}
 
-  filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.45));
+.lightning-spin-glow {
+  filter: blur(14px);
+  opacity: 0.9;
+}
+
+.lightning-inner {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  background: #fff;
+  border-radius: calc(1.5rem - 2px);
+}
+
+@keyframes lightning-orbit {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes borderSnake {

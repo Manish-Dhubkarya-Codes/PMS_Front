@@ -13,6 +13,7 @@ import { FaUser } from "react-icons/fa";
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 
 interface Project {
   Title: string;
@@ -313,6 +314,41 @@ useEffect(() => {
       });
     }
   }, [connected, projectDetails, emitEvent]);
+
+  useEffect(() => {
+    if (!connected) return;
+    if (clientData?.ClientId) {
+      emitEvent("joinClientRoom", clientData.ClientId);
+    }
+
+    const handleProjectStatusUpdated = (data: {
+      project_id?: string | number;
+      projectId?: string | number;
+      status: string;
+      active_date?: string | null;
+    }) => {
+      const id = String(data.project_id ?? data.projectId ?? "");
+      if (!id) return;
+      setProjectDetails((prev) =>
+        prev.map((project) =>
+          String(project.ProjectId) === id
+            ? {
+                ...project,
+                status: data.status,
+                active_date: data.active_date ?? project.active_date,
+              }
+            : project
+        )
+      );
+    };
+
+    const offA = onEvent("projectStatusUpdated", handleProjectStatusUpdated);
+    const offB = onEvent("projectStatusUpdate", handleProjectStatusUpdated);
+    return () => {
+      offA?.();
+      offB?.();
+    };
+  }, [connected, emitEvent, onEvent, clientData?.ClientId]);
 
    
   useEffect(() => {
@@ -787,20 +823,7 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
     })}
   </div>
 
-  {item.active_date && item.status !== "Completed" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date(item.active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel activeDate={item.active_date} status={item.status} />
 </div>
                         <div
     className={`w-[30%] justify-center font-normal text-[12px] -tracking-[0.02rem] flex items-center`}

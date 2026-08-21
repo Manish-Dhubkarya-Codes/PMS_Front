@@ -19,6 +19,7 @@ import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import Button2 from "../../UI_Components/Buttons/Button2";
 import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { readStoredUserData } from "../../utils/authStorage";
+import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 
 interface ProjectListProps {
   workstream: string;
@@ -1335,8 +1336,17 @@ const filteredItems =
       const response = await postData(`clientproject/update_project_status/${projectId}`, { status: newStatus });
 
       if (response.status) {
+        const nextActiveDate = response.data?.active_date || (newStatus === "Active" ? new Date().toISOString() : null);
         setProjectDetails((prev) =>
-          prev.map((p) => (p.project_id === projectId ? { ...p, status: newStatus } : p))
+          prev.map((p) =>
+            String(p.project_id) === String(projectId)
+              ? {
+                  ...p,
+                  status: newStatus,
+                  active_date: nextActiveDate ?? p.active_date ?? null,
+                }
+              : p
+          )
         );
 
         // 🔥 SEND ACTIVATION EMAIL (only when Sales activates)
@@ -1525,20 +1535,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {(item as any).active_date && (item as any).status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={(item as any).active_date}
+    status={(item as any).project_status || (item as any).status}
+  />
 </div>
                             <div className="flex w-[30%] items-center justify-center">
                               {displayEmployees.map((emp, idx) => {
@@ -1675,20 +1675,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {(item as any).active_date && (item as any).status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={(item as any).active_date}
+    status={(item as any).project_status || (item as any).status}
+  />
 </div>
                           <div
                             className={`text-[#000000]  w-[30%] min-w-0 break-words font-normal text-[12px] -tracking-[0.02rem]`}
@@ -1846,20 +1836,10 @@ const filteredItems =
                 <div>
                   Submission Date: {new Date(projectItem.deadline).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
                 </div>
-                {(projectItem as any).active_date && (projectItem as any).status === "Active" && (
-                  <div className="flex items-center gap-2 text-[12px] mt-1">
-                    <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-                    </div>
-                    <span className="text-emerald-700 font-medium tracking-tight">
-                      Active since {new Date((projectItem as any).active_date).toLocaleDateString("en-GB", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric"
-                      })}
-                    </span>
-                  </div>
-                )}
+                <ActiveSinceLabel
+                  activeDate={(projectItem as any).active_date}
+                  status={(projectItem as any).project_status || (projectItem as any).status}
+                />
               </div>
               <div className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}>
                 {extraCount > 0 ? (
@@ -2010,20 +1990,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {projectItem.active_date && projectItem.status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={projectItem.active_date}
+    status={projectItem.status}
+  />
 </div>
                             <div
                               className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}
@@ -2217,20 +2187,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {projectItem.active_date && projectItem.status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={projectItem.active_date}
+    status={projectItem.status}
+  />
 </div>
                             <div
                               className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
@@ -2315,20 +2275,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {(item as any).active_date && (item as any).status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date((item as any).active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={(item as any).active_date}
+    status={(item as any).project_status || (item as any).status}
+  />
 </div>
                           <div
                             className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
@@ -2445,20 +2395,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {projectItem.active_date && projectItem.status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={projectItem.active_date}
+    status={projectItem.status}
+  />
 </div>
                             <div
                               className={`text-[#000000] w-[20%] min-w-0 break-words font-normal text-[12px] -tracking-[0.02rem]`}
@@ -2586,20 +2526,10 @@ const filteredItems =
       year: "numeric"
     })}
   </div>
-  {projectItem.active_date && projectItem.status === "Active" && (
-    <div className="flex items-center gap-2 text-[12px] mt-1">
-      <div className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600"></div>
-      </div>
-      <span className="text-emerald-700 font-medium tracking-tight">
-        Active since {new Date(projectItem.active_date).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric"
-        })}
-      </span>
-    </div>
-  )}
+  <ActiveSinceLabel
+    activeDate={projectItem.active_date}
+    status={projectItem.status}
+  />
 </div>
                               <div
                                 className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
