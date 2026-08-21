@@ -271,7 +271,6 @@ const FileUploadBubble: React.FC<Props> = ({
             {task.error || "Upload failed"}
           </span>
           <div
-            type="div"
             onClick={() => onRetry(task.id)}
             className="flex items-center cursor-pointer gap-1 rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-medium text-red-600 transition hover:bg-red-200"
           >
