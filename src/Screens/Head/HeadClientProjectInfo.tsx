@@ -2572,27 +2572,25 @@ const HeadClientProjectInfo: React.FC = () => {
                                 <FaFilePdf />
                                 Project Details PDF
                               </div>
-                              <button
-                                type="button"
+                              <div
                                 onClick={() =>
                                   handleDownloadFile(
                                     getFileDisplayUrl(projectDetailsPdf.file!.url),
                                     projectDetailsPdf.file!.name,
                                   )
                                 }
-                                className="flex items-center gap-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-full"
+                                className="flex cursor-pointer items-center gap-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-full"
                               >
                                 <FiDownload size={12} />
                                 Download
-                              </button>
+                              </div>
                             </div>
                             <iframe
                               src={getFileDisplayUrl(projectDetailsPdf.file.url)}
                               title={projectDetailsPdf.file.name}
                               className="w-full h-[220px] rounded-lg border border-indigo-100 bg-white"
                             />
-                            <button
-                              type="button"
+                            <div
                               onClick={() =>
                                 handleOpenPreview(
                                   {
@@ -2603,10 +2601,10 @@ const HeadClientProjectInfo: React.FC = () => {
                                   projectDetailsPdf,
                                 )
                               }
-                              className="mt-2 text-xs text-indigo-600 hover:underline"
+                              className="mt-2 cursor-pointer text-xs text-indigo-600 hover:underline"
                             >
                               Open full preview
-                            </button>
+                            </div>
                           </div>
                         )}
                         {(() => {
@@ -3060,14 +3058,14 @@ const HeadClientProjectInfo: React.FC = () => {
                                             </div>
                                             <div className="flex justify-between border-t border-gray-200 bg-white/60 px-3 py-2">
                                               {!msg.isLeft && !isCompleted && (
-                                                <button
+                                                <div
                                                   onClick={() =>
                                                     handleDeleteMessage(msg)
                                                   }
-                                                  className="text-red-500 hover:text-red-700 hover:shadow-[0_0_6px_rgba(255,0,0,0.5)] p-2 rounded-full transition-all"
+                                                  className="text-red-500 cursor-pointer hover:text-red-700 hover:shadow-[0_0_6px_rgba(255,0,0,0.5)] p-2 rounded-full transition-all"
                                                 >
                                                   <FiTrash2 size={16} />
-                                                </button>
+                                                </div>
                                               )}
                                               <div className="flex space-x-2">
                                                 <div
@@ -3091,7 +3089,7 @@ const HeadClientProjectInfo: React.FC = () => {
                                                 >
                                                   <FiZoomIn size={16} />
                                                 </div>
-                                                <button
+                                                <div
                                                   onClick={() =>
                                                     handleDownloadFile(
                                                       file.url.startsWith(
@@ -3102,10 +3100,10 @@ const HeadClientProjectInfo: React.FC = () => {
                                                       file.name,
                                                     )
                                                   }
-                                                  className="text-blue-600 hover:text-blue-800 hover:shadow-[0_0_6px_rgba(0,0,255,0.4)] p-2 rounded-full transition-all"
+                                                  className="text-blue-600 cursor-pointer hover:text-blue-800 hover:shadow-[0_0_6px_rgba(0,0,255,0.4)] p-2 rounded-full transition-all"
                                                 >
                                                   <FiDownload size={16} />
-                                                </button>
+                                                </div>
                                               </div>
                                             </div>
                                           </>
@@ -3117,11 +3115,6 @@ const HeadClientProjectInfo: React.FC = () => {
                                       </div>
                                     ))}
 
-                                  {msg.caption && !msg.isDeleted && (
-                                    <div className="text-gray-800 text-[13px] mt-1.5 px-1 break-words leading-snug">
-                                      {msg.caption}
-                                    </div>
-                                  )}
                                   {!msg.isLeft && !msg.isDeleted && (
                                     <div className="relative flex justify-end mt-1">
                                       <div

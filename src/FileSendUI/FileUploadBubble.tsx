@@ -108,44 +108,64 @@ const FileUploadBubble: React.FC<Props> = ({
 
           {/* Center circular progress — WhatsApp style */}
           <div className="absolute inset-0 flex items-center justify-center bg-black/25">
-            <button
-              type="button"
-              aria-label={
-                task.status === "uploading"
-                  ? "Pause upload"
-                  : task.status === "paused"
-                    ? "Resume upload"
-                    : "Upload control"
-              }
-              disabled={task.status === "queued" || task.status === "completed"}
-              onClick={() => {
-                if (task.status === "uploading") onPause(task.id);
-                else if (task.status === "paused") onResume(task.id);
-                else if (task.status === "error") onResume(task.id);
-              }}
-              className="rounded-full bg-black/45 p-1 backdrop-blur-sm transition hover:bg-black/55"
-            >
-              <UploadProgressRing
-                progress={task.progress}
-                size={56}
-                strokeWidth={3.5}
-                trackColor="rgba(255,255,255,0.35)"
-                progressColor="#ffffff"
-              >
-                <RingCenterIcon task={task} light />
-              </UploadProgressRing>
-            </button>
+<div
+  aria-label={
+    task.status === "uploading"
+      ? "Pause upload"
+      : task.status === "paused"
+        ? "Resume upload"
+        : "Upload control"
+  }
+  aria-disabled={
+    task.status === "queued" || task.status === "completed"
+  }
+  onClick={() => {
+    if (task.status === "queued" || task.status === "completed") {
+      return;
+    }
+
+    if (task.status === "uploading") {
+      onPause(task.id);
+    } else if (
+      task.status === "paused" ||
+      task.status === "error"
+    ) {
+      onResume(task.id);
+    }
+  }}
+  className={`rounded-full bg-black/45 p-1 backdrop-blur-sm transition ${
+    task.status === "queued" || task.status === "completed"
+      ? "cursor-not-allowed opacity-50"
+      : "cursor-pointer hover:bg-black/55"
+  }`}
+>
+  <UploadProgressRing
+    progress={task.progress}
+    size={56}
+    strokeWidth={3.5}
+    trackColor="rgba(255,255,255,0.35)"
+    progressColor="#ffffff"
+  >
+    <RingCenterIcon task={task} light />
+  </UploadProgressRing>
+</div>
           </div>
 
           {/* Cancel */}
-          <button
-            type="button"
-            aria-label="Cancel upload"
-            onClick={() => onCancel(task.id)}
-            className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 text-white transition hover:bg-red-500/80"
-          >
-            <FiX size={14} />
-          </button>
+        <div
+  aria-label="Cancel upload"
+  role="button"
+  tabIndex={0}
+  onClick={() => onCancel(task.id)}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      onCancel(task.id);
+    }
+  }}
+  className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 text-white transition hover:bg-red-500/80 cursor-pointer"
+>
+  <FiX size={14} />
+</div>
         </div>
 
         <div className="flex items-center justify-between gap-2 px-3 py-2">
@@ -154,13 +174,14 @@ const FileUploadBubble: React.FC<Props> = ({
             <UploadStatusLine task={task} speedLabel={speedLabel} etaLabel={etaLabel} />
           </div>
           {task.status === "error" && (
-            <button
-              type="button"
-              onClick={() => onRetry(task.id)}
-              className="flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-medium text-red-600"
-            >
-              <FiRefreshCw size={11} /> Retry
-            </button>
+           <div
+  role="button"
+  tabIndex={0}
+  onClick={() => onRetry(task.id)}
+  className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-200"
+>
+  <FiRefreshCw size={11} /> Retry
+</div>
           )}
         </div>
       </div>
@@ -175,55 +196,72 @@ const FileUploadBubble: React.FC<Props> = ({
       }`}
     >
       <div className="flex items-center gap-3 px-3 py-2">
-        <button
-          type="button"
-          aria-label={
-            task.status === "uploading"
-              ? "Pause upload"
-              : task.status === "paused" || task.status === "queued"
-                ? "Resume upload"
-                : "Upload control"
-          }
-          onClick={() => {
-            if (task.status === "uploading") onPause(task.id);
-            else if (task.status === "paused") onResume(task.id);
-          }}
-          disabled={
-            task.status === "completed" ||
-            task.status === "error" ||
-            task.status === "queued"
-          }
-          className="relative shrink-0"
-        >
-          <div
-            className={`flex h-11 w-11 items-center justify-center rounded-lg ${
-              task.status === "paused" ? "bg-blue-50 ring-1 ring-blue-200" : "bg-slate-100"
-            } ${color}`}
-          >
-            <UploadProgressRing
-              progress={task.progress}
-              size={44}
-              strokeWidth={3}
-              progressColor={task.status === "paused" ? "#0587F5" : undefined}
-            >
-              <RingCenterIcon task={task} fallback={<Icon size={16} />} />
-            </UploadProgressRing>
-          </div>
-        </button>
+<div
+  aria-label={
+    task.status === "uploading"
+      ? "Pause upload"
+      : task.status === "paused" || task.status === "queued"
+        ? "Resume upload"
+        : "Upload control"
+  }
+  aria-disabled={
+    task.status === "completed" ||
+    task.status === "error" ||
+    task.status === "queued"
+  }
+  onClick={() => {
+    if (
+      task.status === "completed" ||
+      task.status === "error" ||
+      task.status === "queued"
+    ) {
+      return;
+    }
+
+    if (task.status === "uploading") {
+      onPause(task.id);
+    } else if (task.status === "paused") {
+      onResume(task.id);
+    }
+  }}
+  className={`relative shrink-0 ${
+    task.status === "completed" ||
+    task.status === "error" ||
+    task.status === "queued"
+      ? "cursor-not-allowed opacity-50"
+      : "cursor-pointer"
+  }`}
+>
+  <div
+    className={`flex h-11 w-11 items-center justify-center rounded-lg ${
+      task.status === "paused"
+        ? "bg-blue-50 ring-1 ring-blue-200"
+        : "bg-slate-100"
+    } ${color}`}
+  >
+    <UploadProgressRing
+      progress={task.progress}
+      size={44}
+      strokeWidth={3}
+      progressColor={task.status === "paused" ? "#0587F5" : undefined}
+    >
+      <RingCenterIcon task={task} fallback={<Icon size={16} />} />
+    </UploadProgressRing>
+  </div>
+</div>
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium text-slate-800">{task.fileName}</p>
           <UploadStatusLine task={task} speedLabel={speedLabel} etaLabel={etaLabel} />
         </div>
 
-        <button
-          type="button"
+        <div
           aria-label="Cancel upload"
           onClick={() => onCancel(task.id)}
-          className="shrink-0 rounded-full p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+          className="shrink-0 cursor-pointer rounded-full p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
         >
           <FiX size={15} />
-        </button>
+        </div>
       </div>
 
       {task.status === "error" && (
@@ -232,13 +270,13 @@ const FileUploadBubble: React.FC<Props> = ({
             <FiAlertCircle size={12} />
             {task.error || "Upload failed"}
           </span>
-          <button
-            type="button"
+          <div
+            type="div"
             onClick={() => onRetry(task.id)}
-            className="flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-medium text-red-600 transition hover:bg-red-200"
+            className="flex items-center cursor-pointer gap-1 rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-medium text-red-600 transition hover:bg-red-200"
           >
             <FiRefreshCw size={11} /> Retry
-          </button>
+          </div>
         </div>
       )}
     </div>

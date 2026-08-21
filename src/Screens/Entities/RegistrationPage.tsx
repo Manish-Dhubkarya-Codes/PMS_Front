@@ -910,13 +910,20 @@ const handleSubmit = async () => {
               </div>
 
               <div className="flex items-center justify-between text-sm">
-                <button
-                  onClick={handleResendOTP}
-                  disabled={!canResend || isLoading}
-                  className={`font-medium transition-colors ${canResend ? "text-blue-600 hover:text-blue-700 cursor-pointer" : "text-gray-400 cursor-not-allowed"}`}
-                >
-                  {canResend ? "Resend OTP" : `Resend in ${resendTimer}s`}
-                </button>
+                <div
+  onClick={() => {
+    if (!canResend || isLoading) return;
+    handleResendOTP();
+  }}
+  aria-disabled={!canResend || isLoading}
+  className={`font-medium transition-colors ${
+    !canResend || isLoading
+      ? "text-gray-400 cursor-not-allowed"
+      : "text-blue-600 hover:text-blue-700 cursor-pointer"
+  }`}
+>
+  {canResend ? "Resend OTP" : `Resend in ${resendTimer}s`}
+</div>
                 <div className="text-gray-500 text-xs">OTP valid for 10 minutes</div>
               </div>
 

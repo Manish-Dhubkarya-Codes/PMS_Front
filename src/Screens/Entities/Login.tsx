@@ -121,13 +121,17 @@ const Login: React.FC<Props> = ({ isOpen, onClose, title }) => {
     return "employees";
   };
 
+const isValidEmail = (value: string) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+
 const handleForgotClick = () => {
   if (!formData.role) {
     setError("Please select your role first.");
     return;
   }
+  const typed = (formData.name || "").trim();
   setForgotMode('confirm');
-  setResetEmail(formData.name || ''); // prefill if user already typed email
+  setResetEmail(isValidEmail(typed) ? typed : '');
   setResetOtp('');
   setNewPassword('');
   setConfirmNewPassword('');
@@ -136,10 +140,14 @@ const handleForgotClick = () => {
   setSuccess(null);
 };
 
-// NEW (Use this)
 const handleRequestReset = async () => {
-  if (!formData.role || !resetEmail) {
-    setError("Please select role and enter your email.");
+  if (!formData.role) {
+    setResetError("Please select your role first.");
+    return;
+  }
+  const email = resetEmail.trim();
+  if (!isValidEmail(email)) {
+    setResetError("Please enter a valid registered email address.");
     return;
   }
 
@@ -151,7 +159,7 @@ const handleRequestReset = async () => {
     const base = getBasePath(formData.role);
 
     const response: any = await postData(`${base}/request_password_reset`, {
-      email: resetEmail.trim(),
+      email,
       role: formData.role,
     });
 
@@ -160,10 +168,10 @@ const handleRequestReset = async () => {
       if (response.sentTo) setResetEmail(response.sentTo);
       setForgotMode('otp');
     } else {
-      setError(response?.message || "Failed to send OTP.");
+      setResetError(response?.message || "Failed to send OTP.");
     }
-  } catch (err: any) {
-    setError("Failed to request password reset. Please try again.");
+  } catch {
+    setResetError("Failed to request password reset. Please try again.");
   } finally {
     setIsLoading(false);
   }
@@ -529,27 +537,38 @@ const handleRequestReset = async () => {
         <input
           type="email"
           value={resetEmail}
-          onChange={(e) => setResetEmail(e.target.value)}
+          onChange={(e) => {
+            setResetEmail(e.target.value);
+            if (resetError) setResetError(null);
+          }}
           placeholder="Enter your registered email"
           className="w-full px-4 py-2 text-[14px] rounded-[6px] bg-white text-slate-800 outline-none"
         />
       </div>
     </div>
 
+    {resetError && <p className="text-red-500 text-xs text-center mb-3">{resetError}</p>}
+
     <div className="flex gap-3">
-      <button 
-        onClick={() => setForgotMode('login')} 
+      <div
+        onClick={() => setForgotMode('login')}
         className="flex-1 py-2.5 text-sm font-medium border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
       >
         Cancel
-      </button>
-      <button 
-        onClick={handleRequestReset} 
-        disabled={isLoading || !resetEmail} 
-        className="flex-1 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-70"
-      >
-        {isLoading ? 'SENDING...' : 'Send OTP'}
-      </button>
+      </div>
+      <div
+  onClick={(e) => {
+    if (isLoading || !resetEmail) return;
+    handleRequestReset(e);
+  }}
+  className={`flex-1 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg ${
+    isLoading || !resetEmail
+      ? 'opacity-70 cursor-not-allowed'
+      : 'cursor-pointer'
+  }`}
+>
+  {isLoading ? 'SENDING...' : 'Send OTP'}
+</div>
     </div>
   </div>
 )}
@@ -576,9 +595,30 @@ const handleRequestReset = async () => {
                   <div onClick={handleRequestReset} className="text-blue-600 hover:text-blue-700 font-medium border-1 rounded-sm cursor-pointer px-3 py-1">Resend OTP</div>
                 </div>
                 {resetError && <p className="text-red-500 text-xs text-center mt-3">{resetError}</p>}
-                <button type="button" onClick={handleVerifyOtp} disabled={isLoading || resetOtp.length !== 6} className="mt-5 w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-700 transition disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                  {isLoading ? <>VERIFYING <span className="animate-spin w-4 h-4 border-2 border-white/70 border-t-white rounded-full" /></> : 'VERIFY OTP'}
-                </button>
+                <div
+  onClick={(e) => {
+    if (isLoading || resetOtp.length !== 6) {
+      e.preventDefault();
+      return;
+    }
+
+    handleVerifyOtp();
+  }}
+  className={`mt-5 w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white transition flex items-center justify-center gap-2 ${
+    isLoading || resetOtp.length !== 6
+      ? 'bg-blue-400 cursor-not-allowed'
+      : 'hover:bg-blue-700 cursor-pointer'
+  }`}
+>
+  {isLoading ? (
+    <>
+      VERIFYING
+      <span className="animate-spin w-4 h-4 border-2 border-white/70 border-t-white rounded-full" />
+    </>
+  ) : (
+    'VERIFY OTP'
+  )}
+</div>
               </div>
             )}
 
@@ -622,10 +662,23 @@ const handleRequestReset = async () => {
 
                 {resetError && <p className="text-red-500 text-xs mb-3 text-center">{resetError}</p>}
 
-                <button onClick={handleResetPassword} disabled={isLoading} className="w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:bg-blue-400">
-                  {isLoading ? 'RESETTING...' : 'RESET PASSWORD'}
-                </button>
-                <button onClick={() => setForgotMode('otp')} className="w-full mt-2 text-xs text-slate-500 hover:text-slate-700 py-1">Back to OTP</button>
+               <div
+  onClick={isLoading ? undefined : handleResetPassword}
+  className={`w-full py-3 rounded-md text-sm font-bold uppercase tracking-widest text-white transition flex items-center justify-center gap-2 ${
+    isLoading
+      ? 'bg-blue-400 cursor-not-allowed'
+      : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+  }`}
+>
+  {isLoading ? 'RESETTING...' : 'RESET PASSWORD'}
+</div>
+
+<div
+  onClick={() => setForgotMode('otp')}
+  className="w-full mt-2 text-xs text-slate-500 hover:text-slate-700 py-1 cursor-pointer"
+>
+  Back to OTP
+</div>
               </div>
             )}
           </div>

@@ -175,20 +175,20 @@ const handleDeclineClick = () => {
         )}
 
         {isTeamLeader && onRemoveAsTL && (
-          <button
+          <div
             onClick={(e) => {
               e.stopPropagation();
               onRemoveAsTL();
               setShowMenu(false);
             }}
-            className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+            className="block cursor-pointer w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
           >
             Remove from Team Leader
-          </button>
+          </div>
         )}
 
         {!isTeamLeader && onPromoteToTL && (
-          <button
+          <div
             onClick={(e) => {
               e.stopPropagation();
               handlePromoteClick();
@@ -197,7 +197,7 @@ const handleDeclineClick = () => {
             className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
           >
             Promote to Team Leader
-          </button>
+          </div>
         )}
       </div>
     )}
@@ -221,16 +221,16 @@ const handleDeclineClick = () => {
               />
             </div>
             <div className="flex justify-end space-x-2">
-              <button
+              <div
                 onClick={() => {
                   setShowPromoteModal(false);
                   setSecurityKeyInput("");
                 }}
-                className="px-4 py-2 bg-gray-300 rounded-md hover:bg-gray-400"
+                className="px-4 py-2 cursor-pointer bg-gray-300 rounded-md hover:bg-gray-400"
               >
                 Cancel
-              </button>
-              <button
+              </div>
+              <div
                 onClick={() => {
                   if (securityKeyInput.trim()) {
                     onPromoteToTL?.(securityKeyInput.trim());
@@ -240,10 +240,10 @@ const handleDeclineClick = () => {
                     alert("Security Key is required.");
                   }
                 }}
-                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                className="px-4 cursor-pointer py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
               >
                 Promote
-              </button>
+              </div>
             </div>
           </div>
         </div>

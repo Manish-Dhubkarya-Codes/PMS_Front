@@ -49,9 +49,9 @@ const PageNotFound: React.FC = () => {
           Oops! The page you're looking for doesn't exist or is not accessible for you or has been moved.
           Please check the URL or return to homepage.
         </p>
-        <button
+        <div
           onClick={handleGoHome}
-          className="inline-flex items-center px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold rounded-full shadow-lg transform transition-transform duration-300 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-gray-900"
+          className="inline-flex cursor-pointer items-center px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold rounded-full shadow-lg transform transition-transform duration-300 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-gray-900"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -69,7 +69,7 @@ const PageNotFound: React.FC = () => {
             <polyline points="9 22 9 12 15 12 15 22" />
           </svg>
           Go to Homepage
-        </button>
+        </div>
       </div>
     </div>
   );

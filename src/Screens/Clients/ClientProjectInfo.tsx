@@ -2755,11 +2755,6 @@ const handleSendMessage = async (
   </div>
 )}
 
-                                      {msg.caption && (
-                                        <div className="text-gray-800 text-[13px] mt-1.5 px-1 break-words leading-snug">
-                                          {msg.caption}
-                                        </div>
-                                      )}
                                       <div className="text-xs text-gray-500 mt-1 flex items-center justify-end gap-1">
                                         {new Date(msg.timestamp).toLocaleTimeString("en-IN", {
                                           hour: "numeric",

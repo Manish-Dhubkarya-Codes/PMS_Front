@@ -143,16 +143,27 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
 
   
   useEffect(() => {
-    if (
-      previewRef.current &&
-      (selectedFiles.length > 0 || isRecording || audioBlob)
-    ) {
-      const height = previewRef.current.offsetHeight;
+    const previewOpen =
+      selectedFiles.length > 0 ||
+      isRecording ||
+      !!audioBlob ||
+      !!replyTo ||
+      !!editingMessage;
+    if (previewRef.current && previewOpen) {
+      // mb-1.5 gap so the panel sits fully above the type bar
+      const height = previewRef.current.offsetHeight + 6;
       onPreviewHeightChange?.(height);
     } else {
       onPreviewHeightChange?.(0);
     }
-  }, [selectedFiles, isRecording, audioBlob, editingMessage, onPreviewHeightChange]);
+  }, [
+    selectedFiles,
+    isRecording,
+    audioBlob,
+    replyTo,
+    editingMessage,
+    onPreviewHeightChange,
+  ]);
   useEffect(() => {
     if (isRecording && !isPaused) {
       timerRef.current = setInterval(() => {
@@ -945,23 +956,25 @@ const handleSend = () => {
           Chat is restricted to the Project Monitor only
         </div>
       )}
+      <div className="relative w-full flex flex-col items-center">
       {(selectedFiles.length || isRecording || audioBlob || replyTo || editingMessage) && (
         <motion.div
           ref={previewRef}
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 0 }}
           animate={{
             opacity: 1,
             y: 0,
             x: isCanceling ? -100 : 0,
             scale: isCanceling ? 0.8 : 1,
           }}
-          exit={{ opacity: 0, y: 10 }}
-          className="absolute bottom-6 z-30 w-[98%] p-2 rounded-t-sm shadow-xl bg-white/70 backdrop-blur-md border border-white/30 flex flex-col space-y-4 transition-all duration-300"
+          exit={{ opacity: 0, y: 0 }}
+          className="absolute left-0 right-0 mx-auto z-30 w-[98%] px-2 pt-1.5 pb-0 rounded-t-sm shadow-xl bg-white/70 backdrop-blur-md border border-white/30 border-b-0 flex flex-col gap-1.5 transition-all duration-300"
+          style={{ bottom: "calc(100% + 6px)" }}
           transition={{ duration: isCanceling ? 0.3 : 0.3 }}
         >
           {/* Reply */}
           {replyTo && (
-            <div className="relative w-[85%] border-l-4 border-blue-500 bg-gray-50/80 backdrop-blur-sm p-3 mx-2 my-1 rounded-r-lg shadow-sm flex items-center gap-3 transition-all animate-in slide-in-from-bottom-2">
+            <div className="relative w-full border-l-4 border-blue-500 bg-gray-50/80 backdrop-blur-sm px-2.5 py-1.5 rounded-r-lg shadow-sm flex items-center gap-3">
               {/* Left side: Content */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
@@ -992,7 +1005,7 @@ const handleSend = () => {
           )}
           {/* Edit bubble */}
           {editingMessage && (
-            <div className="relative w-[85%] border-l-4 border-amber-500 bg-amber-50/80 backdrop-blur-sm p-3 mx-2 my-1 rounded-r-lg shadow-sm flex items-center gap-3 transition-all animate-in slide-in-from-bottom-2">
+            <div className="relative w-full border-l-4 border-amber-500 bg-amber-50/80 backdrop-blur-sm px-2.5 py-1.5 rounded-r-lg shadow-sm flex items-center gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-[11px] uppercase tracking-wider font-bold text-amber-600">
@@ -1027,11 +1040,11 @@ const handleSend = () => {
                         className="w-full h-full object-cover"
                       />
                     ) : file.type === "application/pdf" ? (
-                      <div className="w-[200px] h-[250px] overflow-hidden rounded-lg">
+                      <div className="h-full w-full min-h-0 overflow-hidden rounded-lg">
                         <iframe
                           src={`${filePreviewUrls[index]}#page=1&view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
                           title={file.name}
-                          className="w-[calc(100%+20px)] h-full border-0 pointer-events-none -mr-5"
+                          className="h-full w-[calc(100%+20px)] max-h-24 border-0 pointer-events-none -mr-5"
                         />
                       </div>
                     ) : file.type.startsWith("audio/") ? (
@@ -1510,6 +1523,7 @@ const handleSend = () => {
           accept={allowedFileTypes.join(",")}
           multiple
         />
+      </div>
       </div>
       {showQuill && (
         <div className="fixed inset-0 z-50 font-librefranklin flex items-center justify-center px-4">
