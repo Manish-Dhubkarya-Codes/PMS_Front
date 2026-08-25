@@ -8,7 +8,7 @@ import {
   persistAuthTokens,
 } from "../utils/authStorage";
 
-const serverURL = 'http://localhost:3000';
+const serverURL = 'https://api.cognicodeedutech.com';
 console.log('🚀 Axios baseURL being used:', serverURL || '(empty = using Vite proxy)');
 
 // Global flag to prevent multiple simultaneous refreshes

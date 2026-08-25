@@ -152,18 +152,18 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ user, onClose }) => {
     setError(null);
     setAnimate(true);
 
-    const body = { key_id, name, email, mobile: countryCode + mobile };
+    const body = { key_id: key_id.trim(), name: name.trim(), email: email.trim(), mobile: countryCode + mobile };
 
     try {
       const response = await postData(`clients/save_security_key`, body);
       if (response.status) {
-        setSuccess("Security key saved successfully!");
+        setSuccess(response.message || "Security key saved and sent to email!");
         setName(""); setEmail(""); setMobile(""); setKeyId("");
         setTimeout(() => {
           setShowClientKeyForm(false);
         }, 1800);
       } else {
-        setError("Failed to save security key.");
+        setError(response.message || "Failed to save security key.");
       }
     } catch (err) {
       setError("Error submitting security key.");
@@ -180,16 +180,16 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ user, onClose }) => {
     setTlError(null);
     setTlAnimate(true);
 
-    const body = { key_id: tlKeyId, name: tlName, email: tlEmail, mobile: tlCountryCode + tlMobile };
+    const body = { key_id: tlKeyId.trim(), name: tlName.trim(), email: tlEmail.trim(), mobile: tlCountryCode + tlMobile };
 
     try {
-      const response = await postData(`teamleader/save_teamleader_key`, body);   // ← Change endpoint if your backend uses different route
+      const response = await postData(`teamleader/save_teamleader_key`, body);
       if (response.status) {
-        setTlSuccess("TL key saved successfully!");
+        setTlSuccess(response.message || "TL key saved and sent to email!");
         setTlName(""); setTlEmail(""); setTlMobile(""); setTlKeyId("");
         setTimeout(() => setShowTLKeyForm(false), 1800);
       } else {
-        setTlError("Failed to save TL key.");
+        setTlError(response.message || "Failed to save TL key.");
       }
     } catch (err) {
       setTlError("Error submitting TL key.");

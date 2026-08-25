@@ -123,6 +123,9 @@ const TeamLeaderLanding: React.FC = () => {
   const projectDetailsRef = useRef<ProjectListProps[]>([]);
   const requestsRef = useRef<RequestProps[]>([]);
   const initialLoadRef = useRef(false);
+  const alignContainerRef = useRef<HTMLDivElement>(null);
+  const navStartRef = useRef<HTMLDivElement>(null);
+  const [tableStart, setTableStart] = useState(0);
   const [showModal, setShowModal] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ProjectListProps | null>(null);
   // New: Department state
@@ -141,20 +144,11 @@ const TeamLeaderLanding: React.FC = () => {
   const fetchEmployees = useCallback(async () => {
     try {
       const employeeRegResponse = await getData('employees/fetch_all_registrations');
-      if (employeeRegResponse.status) {
+      if (employeeRegResponse.status && Array.isArray(employeeRegResponse.data)) {
         const sortedData = (employeeRegResponse.data as EmployeeRegRequest[]).sort(sortByLatestDate);
-        setEmployeeRegRequests((prev) => {
-          if (JSON.stringify(prev) !== JSON.stringify(sortedData)) {
-            return sortedData;
-          }
-          return prev;
-        });
-        setError((prev) => (prev && prev.includes("employee") ? null : prev));
-      } else {
-        setError(employeeRegResponse.data?.message || "Failed to fetch employee registrations.");
+        setEmployeeRegRequests(sortedData);
       }
     } catch (err) {
-      setError("Failed to fetch employee registrations. Please try again.");
       console.error("Fetch Employees Error:", err);
     }
   }, []);
@@ -491,12 +485,10 @@ setTotalUnreadRequests(
       if (projectResponse.status) {
         const newData = projectResponse.data || [];
         nextProjects = newData;
-        if (JSON.stringify(prevProjectDetailsRef.current) !== JSON.stringify(newData)) {
-          setProjectDetails(newData);
-          prevProjectDetailsRef.current = newData;
-          projectDetailsRef.current = newData;
-          setAllProjectIds(newData.map((p: any) => p.project_id));
-        }
+        setProjectDetails(newData);
+        prevProjectDetailsRef.current = newData;
+        projectDetailsRef.current = newData;
+        setAllProjectIds(newData.map((p: any) => String(p.project_id)));
       } else {
         setError(projectResponse.message || "Failed to fetch projects.");
       }
@@ -524,30 +516,49 @@ setTotalUnreadRequests(
   }, [department, fetchUnreadInfo]);
 
   const fetchProjects = useCallback(async () => {
-  const projectResponse = await getData("clientproject/show_all_clientsprojects");
-  if (projectResponse.status) {
-    const newData = projectResponse.data || [];
-    if (JSON.stringify(prevProjectDetailsRef.current) !== JSON.stringify(newData)) {
+  try {
+    const projectResponse = await getData("clientproject/show_all_clientsprojects");
+    if (projectResponse.status) {
+      const newData = projectResponse.data || [];
       setProjectDetails(newData);
       prevProjectDetailsRef.current = newData;
-      setAllProjectIds(newData.map((p: any) => p.project_id));
+      projectDetailsRef.current = newData;
+      setAllProjectIds(newData.map((p: any) => String(p.project_id)));
     }
+  } catch (err) {
+    console.error("Fetch Projects Error:", err);
   }
 }, []);
 
-// ADD this after the existing "Listen for project status updates" useEffect
 useEffect(() => {
   if (!connected) return;
 
   const handleNewProject = (data?: any) => {
-    console.log("🆕 New project created – refreshing list", data);
-    fetchProjectsAndRequests();
+    if (data?.project_id) {
+      setProjectDetails((prev) => {
+        if (prev.some((p) => String(p.project_id) === String(data.project_id))) return prev;
+        const next = [{
+          project_id: String(data.project_id),
+          title: data.title || "",
+          workstream: data.workstream || "",
+          clientName: data.clientName || "",
+          status: data.status || "Hold",
+          deadline: data.deadline ? String(data.deadline) : "",
+          description: data.description || "",
+          budget: data.budget,
+        }, ...prev];
+        prevProjectDetailsRef.current = next;
+        projectDetailsRef.current = next;
+        setAllProjectIds(next.map((p) => String(p.project_id)));
+        return next;
+      });
+    }
     fetchProjects();
   };
 
   const off = onEvent("newProjectCreated", handleNewProject);
   return () => off?.();
-}, [connected, onEvent, fetchProjects, fetchProjectsAndRequests]);
+}, [connected, onEvent, fetchProjects]);
 
 // Join global room so Sales TL receives new projects
 useEffect(() => {
@@ -558,12 +569,11 @@ useEffect(() => {
   }
 }, [connected, emitEvent]);
 
-  // Initial fetch — run once per department, never re-enter the full-page loader
+  // Initial fetch — Strict Mode remounts once, so reset the skip flag on cleanup.
   useEffect(() => {
-    if (!department || initialLoadRef.current) return;
-    initialLoadRef.current = true;
+    if (!department) return;
     let cancelled = false;
-    setLoading(true);
+    if (!initialLoadRef.current) setLoading(true);
     fetchProjectsAndRequests()
       .then(() => {
         if (!cancelled && department === "Technical") {
@@ -571,7 +581,10 @@ useEffect(() => {
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          initialLoadRef.current = true;
+          setLoading(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -755,51 +768,49 @@ useEffect(() => {
     return () => off?.();
   }, [onEvent, fetchUnreadInfo, department]);
 
-  // Keep the verification list in sync with registrations verified elsewhere.
+  // Keep Verify Employee live for Technical TL even when not on that tab.
   useEffect(() => {
-    if (department !== "Technical" || !connected) return;
+    if (!connected) return;
 
     const handleEmployeeRegUpdate = (data: { id: string; status: 'pending' | 'accepted' | 'rejected' }) => {
       setEmployeeRegRequests((prev) =>
         prev
           .map((item) =>
-            item.id === data.id ? { ...item, status: data.status } : item
+            String(item.id) === String(data.id) ? { ...item, status: data.status } : item
           )
           .sort(sortByLatestDate)
       );
     };
 
-    const off = onEvent("employeeRegUpdate", handleEmployeeRegUpdate);
+    const handleNewEmployeeRegistration = (data: EmployeeRegRequest) => {
+      setEmployeeRegRequests((prev) => {
+        if (prev.some((item) => String(item.id) === String(data.id))) return prev;
+        return [{ ...data, id: String(data.id), status: data.status || "pending" }, ...prev].sort(sortByLatestDate);
+      });
+      fetchEmployees();
+    };
 
-    return () => off?.();
-  }, [connected, onEvent, department]);
+    const offUpdate = onEvent("employeeRegUpdate", handleEmployeeRegUpdate);
+    const offReg = onEvent("newEmployeeRegistration", handleNewEmployeeRegistration);
+    return () => {
+      offUpdate?.();
+      offReg?.();
+    };
+  }, [connected, onEvent, fetchEmployees]);
 
   useEffect(() => {
-  if (department !== "Technical" || !connected) return;
-
-  const handleNewEmployeeRegistration = (data: EmployeeRegRequest) => {
-    setEmployeeRegRequests((prev) => {
-      if (prev.some((item) => item.id === data.id)) return prev;
-      return [data, ...prev].sort(sortByLatestDate);
-    });
-    // Fetch the canonical list so the TL receives every backend field and status.
+    if (department !== "Technical") return;
     fetchEmployees();
-  };
-
-  const offReg = onEvent("newEmployeeRegistration", handleNewEmployeeRegistration);
-  return () => offReg?.();
-}, [connected, onEvent, department, fetchEmployees]);
-
-  // Match HeadProjectList: refresh immediately and then keep Verify Employee live
-  // while the tab is open, including updates that may have been emitted before a
-  // socket reconnect.
-  useEffect(() => {
-    if (department !== "Technical" || activeTab !== "Verify Employee") return;
-
-    fetchEmployees();
-    const interval = window.setInterval(fetchEmployees, 15000);
+    const interval = window.setInterval(fetchEmployees, 8000);
     return () => window.clearInterval(interval);
-  }, [department, activeTab, fetchEmployees]);
+  }, [department, fetchEmployees]);
+
+  useEffect(() => {
+    if (department !== "Sales") return;
+    fetchProjects();
+    const interval = window.setInterval(fetchProjects, 8000);
+    return () => window.clearInterval(interval);
+  }, [department, fetchProjects]);
 
   // Listen for project status updates (both event names — backend emits projectStatusUpdated)
   useEffect(() => {
@@ -1233,7 +1244,37 @@ const filteredItems =
   const isLG = width > 1024 && width <= 1280;
   const isXL = width > 1280 && width <= 1536;
   const is2XL = width > 1536;
+  const isMobileLayout = isXXS || isXS || isSM || isMD;
   const textSize = is2XL ? "text-[15px]" : "text-[12px]";
+
+  const updateTableStart = useCallback(() => {
+    const container = alignContainerRef.current;
+    const nav = navStartRef.current;
+    if (!container || !nav) return;
+    const firstTab = nav.querySelector<HTMLElement>("[data-nav-start]");
+    const startEl = firstTab ?? nav;
+    const offset =
+      startEl.getBoundingClientRect().left - container.getBoundingClientRect().left;
+    setTableStart(Math.max(0, Math.round(offset)));
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(updateTableStart);
+    const container = alignContainerRef.current;
+    const nav = navStartRef.current;
+    if (!container) {
+      return () => cancelAnimationFrame(frame);
+    }
+    const ro = new ResizeObserver(updateTableStart);
+    ro.observe(container);
+    if (nav) ro.observe(nav);
+    window.addEventListener("resize", updateTableStart);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+      window.removeEventListener("resize", updateTableStart);
+    };
+  }, [updateTableStart, loading, activeTab, width, tabs.length]);
 
   const handleRequestTab = (item: GroupedRequestProps) => {
     navigate("/teamleaderprojectass", {
@@ -1394,57 +1435,30 @@ const filteredItems =
     >
       <MainNavigation isMenuHide={false} />
       <div
-        className={`flex ${isXXS || isXS || isSM || isMD
+        className={`flex ${isMobileLayout
             ? "w-full justify-center items-center space-x-[10vw]"
             : "w-full items-center justify-center"
           }`}
       >
-        {(isXXS || isXS || isSM || isMD) && (
-          <div>
-            <TbFilterBolt size={25} onClick={() => setShowFilter(true)} />
-          </div>
-        )}
-        <div className={`${isXXS || isXS || isSM || isMD ? "w-fit" : "w-fit"}`}>
-          <MainSearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
-        </div>
-      </div>
-      <div className="flex w-full gap-x-5 items-start shrink-0 flex-row">
-        {isXXS || isXS || isSM || isMD ? (
-          renderDrawer && (
-            <div
-              className={`
-                fixed top-9 left-0 w-[280px] z-5 bg-blue-50 p-4 rounded-br-[10px]
-                transform transition-transform duration-300 ease-in-out
-                ${drawerVisible ? "translate-x-0" : "-translate-x-full"}
-              `}
-            >
-              <Filter
-                filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
-                setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
-                setClose={() => setShowFilter(false)}
-              />
+        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+          <div className="w-full flex justify-center items-center">
+            <div className="w-fit flex items-center space-x-10">
+              {isMobileLayout && (
+                <div>
+                  <TbFilterBolt size={25} onClick={() => setShowFilter(true)} />
+                </div>
+              )}
+              <MainSearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
             </div>
-          )
-        ) : (
-          <div className="w-[25%] mt-2 shrink-0">
-            <Filter
-              filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
-              setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
-              setClose={setShowFilter}
-            />
           </div>
-        )}
-        <div
-          className={`flex flex-col min-w-0 ${
-            isXXS || isXS || isSM || isMD ? "w-full" : "w-[75%]"
-          }`}
-        >
           <div
-            className={`items-center flex ${
-              isXXS || isXS || isSM || isMD ? "w-full" : "justify-start w-full"
-            }`}
+            ref={alignContainerRef}
+            className={isMobileLayout ? "flex w-full flex-col items-center" : "w-full flex flex-col overflow-visible"}
           >
-            <div className={`w-full ${isXXS || isXS || isSM || isMD ? "" : "mr-[24%]"}`}>
+            <div
+              ref={navStartRef}
+              className="w-full flex justify-center overflow-visible relative z-10"
+            >
               <Navigation1
                 tabs={tabs}
                 activeTab={activeTab}
@@ -1457,9 +1471,39 @@ const filteredItems =
                 totalUnreadAssigned={totalUnreadAssigned}
                 totalUnreadRequests={totalUnreadRequests}
                 totalPendingVerify={totalPendingVerify}
+                centered
               />
             </div>
-          </div>
+            <div className="relative flex w-full items-start mt-7">
+              {isMobileLayout ? (
+                renderDrawer && (
+                  <div
+                    className={`
+                      fixed top-9 left-0 w-[280px] z-50 bg-blue-50 p-4 rounded-br-[10px]
+                      transform transition-transform duration-300 ease-in-out
+                      ${drawerVisible ? "translate-x-0" : "-translate-x-full"}
+                    `}
+                  >
+                    <Filter
+                      filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
+                      setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
+                      setClose={() => setShowFilter(false)}
+                    />
+                  </div>
+                )
+              ) : (
+                <div className="absolute left-0 top-0 [&>div]:mx-0">
+                  <Filter
+                    filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
+                    setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
+                    setClose={setShowFilter}
+                  />
+                </div>
+              )}
+              <div
+                className={isMobileLayout ? "flex w-full flex-col" : "w-full min-w-0"}
+                style={isMobileLayout ? undefined : { paddingLeft: tableStart }}
+              >
           <div className={activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"}>
             {department === "Technical" ? (
               activeTab === "Requests" ? (
@@ -1473,7 +1517,7 @@ const filteredItems =
                         <div
                           onClick={() => handleRequestTab(item)}
                           key={index}
-                          className={`flex cursor-pointer justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                          className={`flex cursor-pointer justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
                             } w-full min-w-[700px] flex-col`}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
@@ -1485,7 +1529,7 @@ const filteredItems =
                                 value={item.workstream}
                               />
                              <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:" + item.project_id}
   </span>
 
@@ -1577,7 +1621,7 @@ const filteredItems =
                     return null;
                   })
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -1600,7 +1644,7 @@ const filteredItems =
                     return (
                       <div
                         key={index}
-                        className={`flex relative ${hasAnyUnreadOrMention ? "pb-10" : ""} justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                        className={`flex relative ${hasAnyUnreadOrMention ? "pb-10" : ""} justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
                           } w-full min-w-0 flex-col`}
                       >
                         <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
@@ -1613,7 +1657,7 @@ const filteredItems =
                               value={item.workstream}
                             />
                             <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
 </div>
@@ -1690,7 +1734,7 @@ const filteredItems =
                     );
                   })
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -1730,7 +1774,7 @@ const filteredItems =
           <div
             key={index}
             className={`flex relative ${hasAnyUnreadOrMention ? "pb-20" : ""} justify-start items-start ${
-              index === currentItems.length - 1 ? "mt-7" : "my-7"
+              index === currentItems.length - 1 ? "mt-7" : "my-0"
             } w-full min-w-[700px] flex-col`}
           >
             <div className="flex flex-col-reverse items-start justify-start w-full">
@@ -1743,7 +1787,7 @@ const filteredItems =
                   value={projectItem.workstream}
                 />
                 <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
 </div>
@@ -1841,7 +1885,7 @@ const filteredItems =
                   status={(projectItem as any).project_status || (projectItem as any).status}
                 />
               </div>
-              <div className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}>
+              <div className={`text-[#000000] w-[30%] font-normal ${textSize} -tracking-[0.02rem] justify-center flex items-center gap-1`}>
                 {extraCount > 0 ? (
                   <>
                     {firstEmployee}
@@ -1859,7 +1903,7 @@ const filteredItems =
       return null;
     })
   ) : (
-    <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+    <div className={`mt-7 flex flex-col items-center  justify-center`}>
       <div className="bg-white p-3 rounded-full shadow-sm mb-4">
         <MdFolderOff color="gray" size={40} />
       </div>
@@ -1886,7 +1930,7 @@ const filteredItems =
                       return (
                         <div
                           key={index}
-                          className={`flex relative ${!hasAnyUnreadOrMention ? "" : "pb-22"}  justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                          className={`flex relative ${!hasAnyUnreadOrMention ? "" : "pb-22"}  justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
                             } w-full min-w-[700px] flex-col`}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
@@ -1899,7 +1943,7 @@ const filteredItems =
                                 value={projectItem.workstream}
                               />
                               <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
 </div>
@@ -1996,7 +2040,7 @@ const filteredItems =
   />
 </div>
                             <div
-                              className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem] justify-center flex items-center gap-1`}
+                              className={`text-[#000000] w-[30%] font-normal ${textSize} -tracking-[0.02rem] justify-center flex items-center gap-1`}
                             >
                               {extraCount > 0 ? (
                                 <>
@@ -2016,7 +2060,7 @@ const filteredItems =
                     return null;
                   })
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -2129,7 +2173,7 @@ const filteredItems =
                       return (
                         <div
                           key={index}
-                          className={`flex relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                          className={`flex relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
                             } w-full min-w-[700px] flex-col`}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
@@ -2141,7 +2185,7 @@ const filteredItems =
                                 value={projectItem.workstream}
                               />
                               <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
 </div>
@@ -2193,7 +2237,7 @@ const filteredItems =
   />
 </div>
                             <div
-                              className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
+                              className={`text-gray-600 w-[30%] font-normal ${textSize} -tracking-[0.02rem]`}
                             >
                               {projectItem.clientName || "N/A"}
                             </div>
@@ -2204,7 +2248,7 @@ const filteredItems =
                     return null;
                   })
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -2214,7 +2258,7 @@ const filteredItems =
                   </div>
                 )
               ) : (
-                <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                <div className={`mt-7 flex flex-col items-center  justify-center`}>
                   <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                     <MdFolderOff color="gray" size={40} />
                   </div>
@@ -2235,7 +2279,7 @@ const filteredItems =
                     return (
                       <div
                         key={index}
-                        className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                        className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
                           } w-full min-w-[700px] flex-col`}
                         onClick={() => {  // Add this onClick handler for popup
                           setSelectedProject(projectItem);
@@ -2251,7 +2295,7 @@ const filteredItems =
                               value={item.workstream}
                             />
                             <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:"+item.project_id}
   </span>
 </div>
@@ -2281,7 +2325,7 @@ const filteredItems =
   />
 </div>
                           <div
-                            className={`text-[#000000] w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
+                            className={`text-[#000000] w-[30%] font-normal ${textSize} -tracking-[0.02rem]`}
                           >
                             {item.clientName || "N/A"}
                           </div>
@@ -2330,7 +2374,7 @@ const filteredItems =
                     );
                   })
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -2355,7 +2399,7 @@ const filteredItems =
                       return (
                         <div
                           key={index}
-                          className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                          className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length ? "mt-7" : "my-0"
                             } w-full min-w-0 flex-col`}
                           onClick={() => {
                             setSelectedProject(projectItem);
@@ -2363,7 +2407,8 @@ const filteredItems =
                           }}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
-                            <div className="flex items-start gap-2 w-full min-w-0">
+                            <div className="flex items-center justify-between gap-3 w-full min-w-0">
+                              <div className="flex items-center gap-2 min-w-0">
                               <Button1
                                 width={widthClass}
                                 gradientType="gradient1"
@@ -2371,10 +2416,22 @@ const filteredItems =
                                 value={projectItem.workstream}
                               />
                               <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className={`font-mono ${textSize} font-bold text-slate-900 tracking-tight`}>
     {"ID:"+projectItem.project_id}
   </span>
 </div>
+                              </div>
+                              {department === "Sales" && projectItem.status === "Active" && (
+                                <Button2
+                                  value="Update Progress"
+                                  onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    setSelectedProgressProject(projectItem);
+                                    setShowProgressModal(true);
+                                  }}
+                                />
+                              )}
                             </div>
                             <div className="border-t-2 border-[#000000] w-full"></div>
                           </div>
@@ -2405,7 +2462,7 @@ const filteredItems =
                             >
                               {projectItem.clientName || "N/A"}
                             </div>
-                            <div className="flex w-[30%] items-center justify-between">
+                            <div className="flex w-[30%] items-center justify-end">
                               {loadingStatuses[projectItem.project_id] ? (
                                 <div className="flex items-center space-x-2 text-slate-400 animate-pulse">
                                   <RiLoader2Fill className="w-4 h-4 animate-spin" />
@@ -2444,18 +2501,6 @@ const filteredItems =
                                   </div>
                                 </div>
                               )}
-                              {department === 'Sales' && projectItem.status === "Active" && (
-                                <Button2
-                                  value="Update Progress"
-                                  onClick={(e: any) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    setSelectedProgressProject(projectItem);
-                                    setShowProgressModal(true);
-                                  }}
-                                />
-
-                              )}
                             </div>
                           </div>
                         </div>
@@ -2464,7 +2509,7 @@ const filteredItems =
                     return null;
                   })
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -2491,7 +2536,7 @@ const filteredItems =
                         return (
                           <div
                             key={index}
-                            className={`flex relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-7"
+                            className={`flex relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
                               } w-full min-w-[700px] flex-col`}
                           >
                             <div className="flex flex-col-reverse items-start justify-start w-full">
@@ -2502,7 +2547,7 @@ const filteredItems =
                                   value={projectItem.workstream}
                                 />
                                 <div className="flex items-center gap-2  pl-2.5 py-0.5">
-  <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+  <span className="font-mono ${textSize} font-bold text-slate-900 tracking-tight">
     {"ID:"+projectItem.project_id}
   </span>
 </div>
@@ -2532,7 +2577,7 @@ const filteredItems =
   />
 </div>
                               <div
-                                className={`text-gray-600 w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
+                                className={`text-gray-600 w-[30%] font-normal ${textSize} -tracking-[0.02rem]`}
                               >
                                 {projectItem.clientName || "N/A"}
                               </div>
@@ -2583,7 +2628,7 @@ const filteredItems =
                       return null;
                     })
                   ) : (
-                    <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                    <div className={`mt-7 flex flex-col items-center  justify-center`}>
                       <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                         <MdFolderOff color="gray" size={40} />
                       </div>
@@ -2593,7 +2638,7 @@ const filteredItems =
                     </div>
                   )
                 ) : (
-                  <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+                  <div className={`mt-7 flex flex-col items-center  justify-center`}>
                     <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                       <MdFolderOff color="gray" size={40} />
                     </div>
@@ -2603,7 +2648,7 @@ const filteredItems =
                   </div>
                 )
             ) : (
-              <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[22%]"} justify-center`}>
+              <div className={`mt-7 flex flex-col items-center  justify-center`}>
                 <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                   <MdFolderOff color="gray" size={40} />
                 </div>
@@ -2612,6 +2657,9 @@ const filteredItems =
 
               </div>
             )}
+          </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -289,35 +289,28 @@ useEffect(() => {
   const fetchEmployees = useCallback(async () => {
     try {
       const employeeRegResponse = await getData('employees/fetch_all_registrations');
-      if (employeeRegResponse.status) {
+      if (employeeRegResponse.status && Array.isArray(employeeRegResponse.data)) {
         const sortedData = (employeeRegResponse.data as EmployeeRegRequest[]).sort(sortByLatestDate);
         setEmployeeRegRequests(sortedData);
-      } else {
-        setError(employeeRegResponse.data?.message || "Failed to fetch employee registrations.");
       }
     } catch (err) {
-      setError("Failed to fetch employee registrations. Please try again.");
       console.error("Fetch Employees Error:", err);
     }
   }, []);
 
   const fetchSecurityKeys = useCallback(async () => {
   try {
-    const clientResponse = await getData('clients/fetch_all_clients');
-    if (clientResponse.status) {
+    const [clientResponse, teamLeaderResponse] = await Promise.all([
+      getData("clients/fetch_all_clients"),
+      getData("teamleader/fetch_all_teamleaders"),
+    ]);
+    if (clientResponse?.status && Array.isArray(clientResponse.data)) {
       setClientDetails(clientResponse.data as ClientListProps[]);
-    } else {
-      setError(clientResponse.data?.message || "Failed to fetch clients.");
     }
-
-    const teamLeaderResponse = await getData('teamleader/fetch_all_teamleaders');
-    if (teamLeaderResponse.status) {
+    if (teamLeaderResponse?.status && Array.isArray(teamLeaderResponse.data)) {
       setTeamLeaderDetails(teamLeaderResponse.data as TeamLeaderListProps[]);
-    } else {
-      setError(teamLeaderResponse.data?.message || "Failed to fetch team leaders.");
     }
   } catch (err) {
-    setError("Failed to fetch security keys. Please try again.");
     console.error("Fetch Security Keys Error:", err);
   }
 }, []);
@@ -328,14 +321,10 @@ useEffect(() => {
   }
 }, [activeTab, fetchSecurityKeys]);
 useEffect(() => {
-  if (activeTab !== "Security Keys") return;
-
-  const interval = setInterval(() => {
-    fetchSecurityKeys();
-  }, 15000);
-
+  fetchSecurityKeys();
+  const interval = setInterval(fetchSecurityKeys, 8000);
   return () => clearInterval(interval);
-}, [activeTab, fetchSecurityKeys]);
+}, [fetchSecurityKeys]);
 
 const fetchProjects = useCallback(async () => { 
   try {
@@ -448,24 +437,16 @@ const fetchProjects = useCallback(async () => {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
-      await fetchProjects();
-      const clientResponse = await getData('clients/fetch_all_clients');
-      if (clientResponse.status) {
+      try {
+        await fetchProjects();
+        await fetchSecurityKeys();
+        await fetchEmployees();
+      } finally {
         setLoading(false);
-        setClientDetails(clientResponse.data as ClientListProps[]);
-      } else {
-        setError(clientResponse.data?.message || "Failed to fetch clients.");
       }
-      const teamLeaderResponse = await getData('teamleader/fetch_all_teamleaders');
-      if (teamLeaderResponse.status) {
-        setTeamLeaderDetails(teamLeaderResponse.data as TeamLeaderListProps[]);
-      } else {
-        setError(teamLeaderResponse.data?.message || "Failed to fetch team leaders.");
-      }
-      await fetchEmployees();
     };
     fetchData();
-  }, [fetchEmployees]);
+  }, [fetchEmployees, fetchProjects, fetchSecurityKeys]);
   // Listen for new project creation (Client uploads → notify Head live)
 useEffect(() => {
   if (!connected) return;
@@ -511,51 +492,68 @@ useEffect(() => {
   if (!connected) return;
 
   const handleNewEmployeeRegistration = (data: EmployeeRegRequest) => {
-    console.log('🟢 New employee registration received via socket:', data);
     setEmployeeRegRequests((prev) => {
-      if (prev.some(item => item.id === data.id)) return prev;
-      return [data, ...prev].sort(sortByLatestDate);
+      if (prev.some((item) => String(item.id) === String(data.id))) return prev;
+      return [{ ...data, id: String(data.id), status: data.status || "pending" }, ...prev].sort(sortByLatestDate);
     });
-    // Also refetch to ensure consistency
     fetchEmployees();
   };
 
   const handleEmployeeRegUpdate = (data: { id: string; status: 'pending' | 'accepted' | 'rejected' }) => {
-    console.log('🔄 Employee status update received via socket:', data);
     setEmployeeRegRequests((prev) =>
       prev
         .map((item) =>
-          item.id === data.id ? { ...item, status: data.status } : item
+          String(item.id) === String(data.id) ? { ...item, status: data.status } : item
         )
         .sort(sortByLatestDate)
     );
   };
 
-  onEvent('newEmployeeRegistration', handleNewEmployeeRegistration);
-  onEvent('employeeRegUpdate', handleEmployeeRegUpdate);
+  const offReg = onEvent('newEmployeeRegistration', handleNewEmployeeRegistration);
+  const offUpdate = onEvent('employeeRegUpdate', handleEmployeeRegUpdate);
 
   return () => {
-    offEvent('newEmployeeRegistration', handleNewEmployeeRegistration);
-    offEvent('employeeRegUpdate', handleEmployeeRegUpdate);
+    offReg?.();
+    offUpdate?.();
   };
-}, [connected, onEvent, offEvent, fetchEmployees]);
+}, [connected, onEvent, fetchEmployees]);
 
 useEffect(() => {
-  if (activeTab !== "Verify Employee") return;
-
-  // Poll every 15 seconds while on this tab
-  const interval = setInterval(() => {
-    fetchEmployees();
-  }, 15000);
-
+  fetchEmployees();
+  const interval = setInterval(fetchEmployees, 8000);
   return () => clearInterval(interval);
-}, [activeTab, fetchEmployees]);
+}, [fetchEmployees]);
 
 useEffect(() => {
-  if (activeTab === "Verify Employee") {
-    fetchEmployees();
-  }
-}, [activeTab, fetchEmployees]);
+  if (!connected) return;
+
+  const handleNewSecurityKey = (data: SecurityKey & { type?: "client" | "teamLeader" }) => {
+    if (!data?.key_id) {
+      fetchSecurityKeys();
+      return;
+    }
+    const type = data.type === "teamLeader" ? "teamLeader" : "client";
+    const next = {
+      key_id: String(data.key_id),
+      name: data.name || "",
+      email: data.email || "",
+      mobile: data.mobile || "",
+      created_at: data.created_at || new Date().toISOString(),
+    };
+    if (type === "teamLeader") {
+      setTeamLeaderDetails((prev) =>
+        prev.some((item) => String(item.key_id) === next.key_id) ? prev : [next, ...prev]
+      );
+    } else {
+      setClientDetails((prev) =>
+        prev.some((item) => String(item.key_id) === next.key_id) ? prev : [next, ...prev]
+      );
+    }
+  };
+
+  const off = onEvent("newSecurityKey", handleNewSecurityKey);
+  return () => off?.();
+}, [connected, onEvent, fetchSecurityKeys]);
 
   const handleDeleteItem = async (key_id: string, isTeamLeader: boolean) => {
     const endpoint = isTeamLeader ? 'teamleader/delete_teamleader' : 'clients/delete_client';
@@ -673,7 +671,8 @@ const handleDeclineEmployee = async (requestId: string) => {
   }
 };
   const handleKeyFilterChange = useCallback((filters: string[]) => {
-    setKeyFilter(filters[0] || "All");
+    const next = filters[0];
+    setKeyFilter(next === "Client" || next === "Team Leader" ? next : "All");
   }, []);
   // Sort projects: first by total unread (descending), then by status (On-Going first), then by deadline (descending)
   const sortedProjectDetails = [...projectDetails].sort((a, b) => {
@@ -721,15 +720,22 @@ const handleDeclineEmployee = async (requestId: string) => {
     ...teamLeaderDetails.map(t => ({ ...t, type: "teamLeader" as const }))
   ].sort(sortByLatestDate), [clientDetails, teamLeaderDetails]);
   const filteredSecurityKeys = useMemo(() => {
-    return combinedKeys.filter((item) =>
-      item.key_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.mobile.toString().includes(searchQuery.toLowerCase())
-    ).filter((item) => {
-      if (keyFilter === "All") return true;
-      const targetType = keyFilter === "Client" ? "client" : "teamLeader";
-      return item.type === targetType;
+    const query = searchQuery.toLowerCase().trim();
+    return combinedKeys.filter((item) => {
+      const keyId = String(item.key_id || "").toLowerCase();
+      const name = String(item.name || "").toLowerCase();
+      const email = String(item.email || "").toLowerCase();
+      const mobile = String(item.mobile ?? "").toLowerCase();
+      const matchesSearch =
+        !query ||
+        keyId.includes(query) ||
+        name.includes(query) ||
+        email.includes(query) ||
+        mobile.includes(query);
+      if (!matchesSearch) return false;
+      if (keyFilter === "Client") return item.type === "client";
+      if (keyFilter === "Team Leader") return item.type === "teamLeader";
+      return true;
     });
   }, [combinedKeys, searchQuery, keyFilter]);
   const filteredEmployeeRequests = employeeRegRequests.filter(
@@ -744,29 +750,30 @@ const handleDeclineEmployee = async (requestId: string) => {
           (filter === "Rejected" && item.status === "rejected")
         ))
   ).slice().sort(sortByLatestDate);
+  const pageSize = activeTab === "Security Keys" ? Math.max(itemsPerPage, filteredSecurityKeys.length) : itemsPerPage;
   const totalPages = Math.max(
   1,
   Math.ceil(
     activeTab === "All Projects"
-      ? filteredProjects.length / itemsPerPage
+      ? filteredProjects.length / pageSize
       : activeTab === "Security Keys"
-      ? filteredSecurityKeys.length / itemsPerPage
+      ? filteredSecurityKeys.length / pageSize
       : activeTab === "Employees"
-      ? filteredEmployeeRequests.length / itemsPerPage
+      ? filteredEmployeeRequests.length / pageSize
       : activeTab === "Verify Employee"
-      ? filteredEmployeeRequests.length / itemsPerPage
-      : filteredEmployeeRequests.length / itemsPerPage
+      ? filteredEmployeeRequests.length / pageSize
+      : filteredEmployeeRequests.length / pageSize
   )
 );
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
   const currentProjects = filteredProjects.slice(startIndex, endIndex);
   const currentSecurityKeys = filteredSecurityKeys.slice(startIndex, endIndex);
   const currentEmployeeRequests = filteredEmployeeRequests.slice(startIndex, endIndex);
   const projectFilters = ["Data Science", "AI", "Plagarism removal", "Thesis", "Software Development", "Deadline"];
   const departmentFilters = ["Technical", "Sales"];
   const statusFilterOptions = ["Pending", "Verified", "Rejected"];
-  const keyFilters = ["Client", "Team Leader"];
+  const keyFilters = ["All", "Client", "Team Leader"];
   const maxProjectTextLength = Math.max(
     ...projectDetails.map((item) => (item.clientName + item.project_id).length),
     10
@@ -968,6 +975,7 @@ const handleDeclineEmployee = async (requestId: string) => {
                   `}
                 >
                   <Filter
+                    key={activeTab}
                     filters={activeTab === "All Projects" ? projectFilters : activeTab === "Employees" ? departmentFilters : activeTab === "Verify Employee" ? statusFilterOptions : keyFilters}
                     setClose={() => setShowFilter(false)}
                     setSelectedFilters={activeTab === "Security Keys" ? handleKeyFilterChange : activeTab === "Verify Employee" ? setStatusFilters : handleFilterChange}
@@ -979,6 +987,7 @@ const handleDeclineEmployee = async (requestId: string) => {
               : (
               <div className="absolute left-0 top-4 [&>div]:mx-0">
                 <Filter
+                  key={activeTab}
                   filters={activeTab === "All Projects" ? projectFilters : activeTab === "Employees" ? departmentFilters : activeTab === "Verify Employee" ? statusFilterOptions : keyFilters}
                   setClose={setShowFilter}
                   setSelectedFilters={activeTab === "Security Keys" ? handleKeyFilterChange : activeTab === "Verify Employee" ? setStatusFilters : handleFilterChange}
@@ -1144,7 +1153,7 @@ const handleDeclineEmployee = async (requestId: string) => {
               currentSecurityKeys.length > 0 ? (
                 currentSecurityKeys.map((item, index) => (
                   <div
-                    key={index}
+                    key={`${item.type}-${item.key_id}`}
                     className={`flex justify-start items-start ${
                       index === currentSecurityKeys.length - 1 ? "mt-0" : "my-5 mt-0"
                     } w-full min-w-[800px] flex-col`}

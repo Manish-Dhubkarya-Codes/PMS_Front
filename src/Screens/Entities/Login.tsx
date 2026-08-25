@@ -256,39 +256,41 @@ const handleRequestReset = async () => {
       return;
     }
 
+    const trimmedName = (formData.name || "").trim();
+    const trimmedEmploymentId = (formData.employmentId || "").trim();
     const submitData: any = {
       role: formData.role,
       password: formData.password,
     };
 
     if (formData.role === "Employee" || formData.role === "Team Leader") {
-      if (!formData.name || !formData.employmentId) {
+      if (!trimmedName || !trimmedEmploymentId) {
         setError("Name/Email and Employment ID are required.");
         return;
       }
-      submitData.name = formData.name;
-      submitData.employmentId = formData.employmentId;
+      submitData.name = trimmedName;
+      submitData.employmentId = trimmedEmploymentId;
       if (formData.role === "Team Leader") {
-        if (!formData.securityKey) {
+        if (!formData.securityKey?.trim()) {
           setError("Security Key is required for Team Leader.");
           return;
         }
-        submitData.securityKey = formData.securityKey;
+        submitData.securityKey = formData.securityKey.trim();
       }
     } else if (formData.role === "Client") {
-      if (!formData.name || !formData.clientSecurityKey) {
+      if (!trimmedName || !formData.clientSecurityKey?.trim()) {
         setError("Name/Email and Client Security Key are required.");
         return;
       }
-      submitData.name = formData.name;
-      submitData.clientSecurityKey = formData.clientSecurityKey;
+      submitData.name = trimmedName;
+      submitData.clientSecurityKey = formData.clientSecurityKey.trim();
     } else if (formData.role === "Head") {
-      if (!formData.name || !formData.securityKey) {
+      if (!trimmedName || !formData.securityKey?.trim()) {
         setError("Name/Email and Security Key are required.");
         return;
       }
-      submitData.name = formData.name;
-      submitData.securityKey = formData.securityKey;
+      submitData.name = trimmedName;
+      submitData.securityKey = formData.securityKey.trim();
     }
 
     setIsLoading(true);
@@ -319,7 +321,7 @@ const handleRequestReset = async () => {
         startAccessTokenRefreshTimer();
         startRefreshTokenRefreshTimer();
 
-        login({ username: formData.name, role: formData.role });
+        login({ username: trimmedName, role: formData.role });
 
         if (formData.role === "Employee") navigate("/employeelanding");
         else if (formData.role === "Team Leader") navigate("/teamleaderlanding");

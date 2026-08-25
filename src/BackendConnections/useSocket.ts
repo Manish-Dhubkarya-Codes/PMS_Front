@@ -19,7 +19,7 @@ function resolveUrl(serverUrl?: string): string {
     serverUrl ||
     import.meta.env.VITE_API_URL ||
     serverURL ||
-    "http://localhost:3000"
+    "https://api.cognicodeedutech.com"
   );
 }
 

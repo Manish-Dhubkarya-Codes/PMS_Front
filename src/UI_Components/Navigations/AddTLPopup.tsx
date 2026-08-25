@@ -46,16 +46,16 @@ const AddTLPopup: React.FC<AddTLPopupProps> = ({ isOpen, onClose, onSubmit }) =>
     setAnimate(true);
 
     const body = {
-      key_id,
-      name,
-      email,
+      key_id: key_id.trim(),
+      name: name.trim(),
+      email: email.trim(),
       mobile: countryCode + mobile,
     };
 
     try {
       const response = await postData(`teamleader/save_teamleader_key`, body);
       if (response.status) {
-        setSuccess("TL key saved successfully!");
+        setSuccess(response.message || "TL key saved and sent to email!");
         onSubmit();
         setName("");
         setEmail("");
@@ -66,10 +66,10 @@ const AddTLPopup: React.FC<AddTLPopupProps> = ({ isOpen, onClose, onSubmit }) =>
           onClose();
         }, 2000);
       } else {
-        setError("Failed to save admin key.");
+        setError(response.message || "Failed to save TL key.");
       }
     } catch (err) {
-      setError("Error submitting admin key.");
+      setError("Error submitting TL key.");
     } finally {
       setIsSubmitting(false);
       setTimeout(() => setAnimate(false), 2000);

@@ -19,7 +19,7 @@ const Button2: React.FC<Button2Props> = ({ value, onClick, disabled = false, loa
         shadow-[0px_4px_4px_0px_#00000040] 
         flex items-center justify-center 
         text-white 
-        text-[11px] sm:text-[12px] md:text-[13px] lg:text-[14px]
+        text-[11px] sm:text-[12px] md:text-[13px] lg:text-[13px]
         cursor-${disabled || loading ? 'not-allowed' : 'pointer'}
         ${disabled ? 'bg-[#A3A3A3]' : loading ? 'bg-[#1B7BFF]' : 'bg-[#1B7BFF]'}
         ${disabled || loading ? 'opacity-70' : 'opacity-100'}

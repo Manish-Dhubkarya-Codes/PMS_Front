@@ -231,16 +231,18 @@ const handleSubmit = async () => {
   const mobileRegex = /^[0-9]{10,15}$/;
 
   // ====================== VALIDATION ======================
+  const trimmedName = (formData.name || "").trim();
+
   if (formData.role === "Head") {
-    if (!formData.name) {
+    if (!trimmedName) {
       setError("Name is required");
       return;
     }
-    if (!formData.companyMail) {
+    if (!(formData.companyMail || "").trim()) {
       setError("Email is required");
       return;
     }
-    if (!emailRegex.test(formData.companyMail)) {
+    if (!emailRegex.test((formData.companyMail || "").trim())) {
       setError("Please enter a valid email address");
       return;
     }
@@ -258,11 +260,11 @@ const handleSubmit = async () => {
     }
   } 
   else if (formData.role === "Employee" || formData.role === "Team Leader") {
-    if (!formData.name) {
+    if (!trimmedName) {
       setError("Name is required");
       return;
     }
-    if (!formData.employmentId) {
+    if (!(formData.employmentId || "").trim()) {
       setError("Employee ID is required");
       return;
     }
@@ -270,11 +272,11 @@ const handleSubmit = async () => {
       setError("Designation is required");
       return;
     }
-    if (!formData.companyMail) {
+    if (!(formData.companyMail || "").trim()) {
       setError("Company email is required");
       return;
     }
-    if (!emailRegex.test(formData.companyMail)) {
+    if (!emailRegex.test((formData.companyMail || "").trim())) {
       setError("Please enter a valid company email");
       return;
     }
@@ -296,15 +298,15 @@ const handleSubmit = async () => {
     }
   } 
   else if (formData.role === "Client") {
-    if (!formData.name) {
+    if (!trimmedName) {
       setError("Name is required");
       return;
     }
-    if (!formData.ClientMail) {
+    if (!(formData.ClientMail || "").trim()) {
       setError("Email is required");
       return;
     }
-    if (!emailRegex.test(formData.ClientMail)) {
+    if (!emailRegex.test((formData.ClientMail || "").trim())) {
       setError("Please enter a valid email address");
       return;
     }
@@ -350,8 +352,8 @@ const handleSubmit = async () => {
 
     if (formData.role === "Head") {
       const payload = {
-        name: formData.name,
-        email: formData.companyMail,
+        name: trimmedName,
+        email: (formData.companyMail || "").trim(),
         mobile: `${countryCode}${formData.mobile}`,
         password: formData.password,
       };
@@ -362,26 +364,26 @@ const handleSubmit = async () => {
       submitData.append("role", formData.role);
 
       if (formData.role === "Employee" || formData.role === "Team Leader") {
-        submitData.append("employeeName", formData.name || "");
-        submitData.append("employmentID", formData.employmentId || "");
+        submitData.append("employeeName", trimmedName);
+        submitData.append("employmentID", (formData.employmentId || "").trim());
         submitData.append("gender", formData.gender || "");
         submitData.append("employeeDesignation", `${formData.designation} (${formData.department})`);
-        submitData.append("employeeMail", formData.companyMail || "");
+        submitData.append("employeeMail", (formData.companyMail || "").trim());
         if (formData.role === "Team Leader") {
-          submitData.append("securityKey", formData.TlSecurityKey || "");
+          submitData.append("securityKey", (formData.TlSecurityKey || "").trim());
         }
         if (formData.photo) {
           submitData.append("employeePic", formData.photo);
         }
       } else if (formData.role === "Client") {
-        submitData.append("clientName", formData.name || "");
-        submitData.append("clientMail", formData.ClientMail || "");
+        submitData.append("clientName", trimmedName);
+        submitData.append("clientMail", (formData.ClientMail || "").trim());
         submitData.append("mobile", `${countryCode}${formData.mobile || ""}`);
         const effectiveDepartment = formData.department === "Others" ? customDepartment.trim() : formData.department;
         submitData.append("department", effectiveDepartment);
         submitData.append("degree", formData.degree || "");
         submitData.append("requirement", formData.requirement || "");
-        submitData.append("clientSecurityKey", formData.TlSecurityKey || "");
+        submitData.append("clientSecurityKey", (formData.TlSecurityKey || "").trim());
         if (formData.photo) {
           submitData.append("clientPic", formData.photo);
         }
@@ -403,7 +405,7 @@ const handleSubmit = async () => {
         setSuccess("Your registration completed, you can now login!");
         setStep("success");
       } else {
-        const email = formData.companyMail || formData.ClientMail || "";
+        const email = (formData.companyMail || formData.ClientMail || "").trim();
         console.log("🔑 Moving to OTP screen for email:", email);
         setCurrentEmail(email);
         setStep("otp");

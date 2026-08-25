@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, useCallback, useMemo } from "react";
+import { useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import MainSearchBar from "../../UI_Components/SearchBars/MainSearchBar";
 import Navigation1 from "../../UI_Components/Navigations/Navigation1";
 import Filter from "../../UI_Components/Filter/Filter";
@@ -6,7 +6,6 @@ import Button1 from "../../UI_Components/Buttons/Button1";
 import PaginationNav from "../../UI_Components/Navigations/PaginationNav";
 import MainNavigation from "../../UI_Components/Navigations/MainNavigation";
 import { TbFilterBolt } from "react-icons/tb";
-import EmployeeProfile from "./EmployeeProfile";
 import { AuthContext } from "../Authentication/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { getData, postData } from "../../BackendConnections/FetchBackendServices";
@@ -86,6 +85,9 @@ const EmployeeLanding: React.FC = () => {
 });
   const [unreadRequests, setUnreadRequests] = useState<{ [project_id: string]: { unreadFromTL: number; tlName: string } }>({});
   const itemsPerPage = 6;
+  const alignContainerRef = useRef<HTMLDivElement>(null);
+  const navStartRef = useRef<HTMLDivElement>(null);
+  const [tableStart, setTableStart] = useState(0);
 
   // Socket integration
   const { emitEvent, onEvent, connected } = useSocket();
@@ -508,23 +510,6 @@ useEffect(() => {
   checkRole();
 }, []); // ← Empty dependency array (important)
 
-  const employeeProfile = {
-    EmployeeName: employeeData?.EmployeeName ?? "Unknown Employee",
-    Profile: employeeData?.Profile ?? "",
-    Designation: employeeData?.Designation ?? "N/A",
-    TL: "Dheer Verma",
-    ProjectStartDate: "1 June",
-    ProjectEndDate: "1 Sep",
-    ProjectOnGoing: 10,
-    ProjectCompleted: 20,
-    Performance: [
-      { label: "Accuracy", value: "90%" },
-      { label: "On Time Execution", value: "70%" },
-      { label: "Skills", value: "80%" },
-      { label: "Efficiency", value: "75%" },
-    ],
-  };
-
   // Calculate separate unread totals for each tab
   const acceptedProjects = useMemo(() => 
     employeeRequests
@@ -685,6 +670,37 @@ const activeUnreadTotal = 0;
   const isLG = width > 1024 && width <= 1280;
   const isXL = width > 1280 && width <= 1536;
   const is2XL = width > 1536;
+  const isMobileLayout = isXXS || isXS || isSM || isMD;
+  const textSize = is2XL ? "text-[15px]" : "text-[12px]";
+
+  const updateTableStart = useCallback(() => {
+    const container = alignContainerRef.current;
+    const nav = navStartRef.current;
+    if (!container || !nav) return;
+    const firstTab = nav.querySelector<HTMLElement>("[data-nav-start]");
+    const startEl = firstTab ?? nav;
+    const offset =
+      startEl.getBoundingClientRect().left - container.getBoundingClientRect().left;
+    setTableStart(Math.max(0, Math.round(offset)));
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(updateTableStart);
+    const container = alignContainerRef.current;
+    const nav = navStartRef.current;
+    if (!container) {
+      return () => cancelAnimationFrame(frame);
+    }
+    const ro = new ResizeObserver(updateTableStart);
+    ro.observe(container);
+    if (nav) ro.observe(nav);
+    window.addEventListener("resize", updateTableStart);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+      window.removeEventListener("resize", updateTableStart);
+    };
+  }, [updateTableStart, isLoading, requestsLoading, activeTab, width]);
 
   if (isLoading || requestsLoading) {
     return <PageLoadingComponent />;
@@ -706,83 +722,76 @@ const activeUnreadTotal = 0;
       <MainNavigation isMenuHide={false} />
       <div
         className={`flex ${
-          isXXS || isXS || isSM || isMD
+          isMobileLayout
             ? "w-full justify-center items-center space-x-[10vw]"
             : "w-full items-center justify-center"
         }`}
       >
-        {(isXXS || isXS || isSM || isMD) &&(activeTab!==tabs[4]) && (
-          <div>
-            <TbFilterBolt size={25} onClick={() => setShowFilter(true)} />
-          </div>
-        )}
-        <div className={`${isXXS || isXS || isSM || isMD ? "w-fit" : "w-fit"}`}>
-          <MainSearchBar
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-          />
-        </div>
-      </div>
-      <div className={`flex w-full gap-x-5 items-start shrink-0 flex-row`}>
-        {isXXS || isXS || isSM || isMD || activeTab === tabs[4] ? (
-          renderDrawer && (
-            <div
-              className={`
-                fixed top-9 left-0 w-[280px] z-5 bg-blue-50 p-4 rounded-br-[10px]
-                transform transition-transform duration-300 ease-in-out
-                ${drawerVisible ? "translate-x-0" : "-translate-x-full"}
-              `}
-            >
-              <Filter
-                filters={filters}
-                setClose={() => setShowFilter(false)}
-                setSelectedFilters={setSelectedFilters}
+        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+          <div className="w-full flex justify-center items-center">
+            <div className="w-fit flex items-center space-x-10">
+              {isMobileLayout && (
+                <div>
+                  <TbFilterBolt size={25} onClick={() => setShowFilter(true)} />
+                </div>
+              )}
+              <MainSearchBar
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
               />
             </div>
-          )
-        ) : (
-          <div className="w-[25%] mt-2">
-            <Filter
-              filters={filters}
-              setClose={setShowFilter}
-              setSelectedFilters={setSelectedFilters}
-            />
           </div>
-        )}
-        <div
-          className={`flex flex-col ${
-            isXXS || isXS || isSM || isMD
-              ? "w-full"
-              : activeTab === tabs[4]
-              ? "w-full flex"
-              : "w-[75%]"
-          }`}
-        >
           <div
-            className={`items-center flex ${
-              isXXS || isXS || isSM || isMD
-                ? "w-full"
-                : activeTab === tabs[4]
-                ? "w-full flex items-center"
-                : "justify-start w-full"
-            }`}
+            ref={alignContainerRef}
+            className={isMobileLayout ? "flex w-full flex-col items-center" : "w-full flex flex-col overflow-visible"}
           >
-            <div className={`w-full ${isXXS || isXS || isSM || isMD ? "" : "mr-[24%]"}`}>
-
-<Navigation1
-  tabs={tabs}
-  activeTab={activeTab}
-  setActiveTab={(tab) => {
-    setActiveTab(tab);
-    localStorage.setItem("employeeLandingActiveTab", tab);
-  }}
-  totalUnreadActive={activeUnreadTotal}
-  totalUnreadAccepted={acceptedUnreadTotal}
-  totalUnreadRequested={requestedUnreadTotal}
-/>
+            <div
+              ref={navStartRef}
+              className="w-full flex justify-center overflow-visible relative z-10"
+            >
+              <Navigation1
+                tabs={tabs}
+                activeTab={activeTab}
+                setActiveTab={(tab) => {
+                  setActiveTab(tab);
+                  localStorage.setItem("employeeLandingActiveTab", tab);
+                }}
+                totalUnreadActive={activeUnreadTotal}
+                totalUnreadAccepted={acceptedUnreadTotal}
+                totalUnreadRequested={requestedUnreadTotal}
+                centered
+              />
             </div>
-          </div>
-          {activeTab !== tabs[4] ? (
+            <div className="relative flex w-full items-start mt-0">
+              {isMobileLayout ? (
+                renderDrawer && (
+                  <div
+                    className={`
+                      fixed top-9 left-0 w-[280px] z-50 bg-blue-50 p-4 rounded-br-[10px]
+                      transform transition-transform duration-300 ease-in-out
+                      ${drawerVisible ? "translate-x-0" : "-translate-x-full"}
+                    `}
+                  >
+                    <Filter
+                      filters={filters}
+                      setClose={() => setShowFilter(false)}
+                      setSelectedFilters={setSelectedFilters}
+                    />
+                  </div>
+                )
+              ) : (
+                <div className="absolute left-0 top-6 [&>div]:mx-0">
+                  <Filter
+                    filters={filters}
+                    setClose={setShowFilter}
+                    setSelectedFilters={setSelectedFilters}
+                  />
+                </div>
+              )}
+              <div
+                className={isMobileLayout ? "flex w-full flex-col" : "w-full min-w-0"}
+                style={isMobileLayout ? undefined : { paddingLeft: tableStart }}
+              >
             <div className="overflow-x-auto">
               {filteredItems.length > 0 ? (
                 currentItems.map((item, index) => {
@@ -824,11 +833,11 @@ onClick={() => {
     <Button1
       width={widthClass}
       gradientType={isCompletedTab ? undefined : "gradient1"}
-      text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
+      text={textSize}
       value={item.workstream}
     />
-    <div className="flex items-center gap-2 border-l-2 border-indigo-600 pl-2.5 py-0.5">
-      <span className="font-mono text-[14px] font-bold text-slate-900 tracking-tight">
+    <div className="flex items-center gap-2 pl-2.5 py-0.5">
+      <span className={`font-mono ${textSize} font-bold text-slate-900 tracking-tight`}>
         {"ID:" + item.project_id}
       </span>
     </div>
@@ -858,14 +867,14 @@ onClick={() => {
                       <div className="flex mt-3 w-full pl-[2vw] justify-between items-center">
                         <div
                           className={`text-[#000000] w-[35%] text-start flex font-normal ${
-                            is2XL ? "text-[15px]" : "text-[12px]"
+                            textSize
                           } -tracking-[0.02rem]`}
                         >
                           {item.title}
                         </div>
                        <div
   className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[35%] ${
-    is2XL ? "text-[15px]" : "text-[12px]"
+    textSize
   } -tracking-[0.02rem]`}
 >
   <div>
@@ -890,7 +899,7 @@ onClick={() => {
         ? "text-[#0FB300]"
         : "text-[#000000]"
       : "text-[#000000]"
-  } w-[30%] font-normal text-[12px] -tracking-[0.02rem]`}
+  } w-[30%] font-normal ${textSize} -tracking-[0.02rem]`}
 >
   {activeTab === "Active"
     ? item.clientName || "N/A"
@@ -906,7 +915,7 @@ onClick={() => {
                   );
                 })
               ) : (
-                <div className={`mt-7 flex flex-col items-center ${isXXS || isXS || isSM || isMD ? "" : "mr-[35%]"} justify-center`}>
+                <div className="mt-7 flex flex-col items-center justify-center">
                   <div className="bg-white p-3 rounded-full shadow-sm mb-4">
                     <MdDoNotTouch size={40} color="gray" />
                   </div>
@@ -916,22 +925,18 @@ onClick={() => {
                 </div>
               )}
             </div>
-          ) : (
-            <div className="py-10">
-              <EmployeeProfile {...employeeProfile} />
+              </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
-      {activeTab !== tabs[4] && (
-        <div className="mt-8 w-full flex justify-center">
-          <PaginationNav
-            total={totalPages}
-            current={currentPage}
-            onPageChange={setCurrentPage}
-          />
-        </div>
-      )}
+      <div className="mt-8 w-full flex justify-center">
+        <PaginationNav
+          total={totalPages}
+          current={currentPage}
+          onPageChange={setCurrentPage}
+        />
+      </div>
     </div>
   );
 };
