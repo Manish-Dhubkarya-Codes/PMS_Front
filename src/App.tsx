@@ -21,6 +21,7 @@ import { useGlobalPush } from "./hooks/useGlobalPush";
 import { postData, startAccessTokenRefreshTimer, startRefreshTokenRefreshTimer } from "../src/BackendConnections/FetchBackendServices";
 import { unlockChatNotificationSound } from "./utils/chatLive";
 import { clearAuthStorage, readStoredRole, readStoredUserData } from "./utils/authStorage";
+import { useSocket } from "./BackendConnections/useSocket";
 
 // AuthProvider (updated for timers on load)
 const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -62,6 +63,26 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const login = (userData: { username: string; role: string }) => {
     setUser(userData);
   };
+
+  const { emitEvent, onEvent, connected } = useSocket();
+
+  useEffect(() => {
+    if (!connected) return;
+    const stored = readStoredUserData();
+    const role = readStoredRole();
+    if ((role === "Employee" || role === "Team Leader") && stored?.employeeId) {
+      emitEvent("joinEmployeeRoom", stored.employeeId);
+    }
+    const handleBlocked = (payload: { employeeId?: string | number }) => {
+      if (stored?.employeeId != null && String(payload?.employeeId) === String(stored.employeeId)) {
+        setUser(null);
+        clearAuthStorage();
+        window.location.href = "/login-reg";
+      }
+    };
+    const off = onEvent("employeeBlocked", handleBlocked);
+    return () => off?.();
+  }, [connected, emitEvent, onEvent]);
 
   // UPDATED: Make logout async to call backend and clear exps
   const logout = async () => {

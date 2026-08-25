@@ -595,8 +595,23 @@ useEffect(() => {
   useEffect(() => {
     if (connected) {
       emitEvent('joinTlRoom', null);
+      const me = readStoredUserData();
+      if (me?.employeeId) emitEvent("joinEmployeeRoom", me.employeeId);
     }
   }, [connected, emitEvent, department]);
+
+  useEffect(() => {
+    if (!connected) return;
+    const myId = readStoredUserData()?.employeeId;
+    const handleBlocked = (data: { employeeId?: string | number }) => {
+      if (myId != null && String(data?.employeeId) === String(myId)) {
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
+      }
+    };
+    const off = onEvent("employeeBlocked", handleBlocked);
+    return () => off?.();
+  }, [connected, onEvent, contextLogout]);
 
 useEffect(() => {
   if (department !== "Technical") return;
@@ -915,8 +930,11 @@ useEffect(() => {
     }
   }, [department]);
 
-  const handleVerifyEmployee = async (requestId: string) => {
+  const handleVerifyEmployee = async (requestId: string, currentStatus?: string) => {
     if (verifyingIds.has(requestId)) return;
+    if (currentStatus === "rejected" && !window.confirm("Re-verify this rejected employee? They can log in with their existing details without registering again.")) {
+      return;
+    }
 
     setVerifyingIds((prev) => new Set([...prev, requestId]));
 
@@ -926,15 +944,15 @@ useEffect(() => {
         setEmployeeRegRequests((prev) =>
           prev
             .map((item) =>
-              item.id === requestId ? { ...item, status: 'accepted' as 'accepted' } : item
+              item.id === requestId ? { ...item, status: "accepted" as const } : item
             )
             .sort(sortByLatestDate)
         );
       } else {
-        setError(response.message || "Failed to verify employee.");
+        window.alert(response.message || "Failed to verify employee.");
       }
     } catch (err) {
-      setError("Failed to verify employee. Please try again.");
+      window.alert("Failed to verify employee. Please try again.");
       console.error("Verify Error:", err);
     } finally {
       setVerifyingIds((prev) => {
@@ -945,8 +963,11 @@ useEffect(() => {
     }
   };
 
-  const handleDeclineEmployee = async (requestId: string) => {
+  const handleDeclineEmployee = async (requestId: string, currentStatus?: string) => {
     if (decliningIds.has(requestId)) return;
+    if (currentStatus === "accepted" && !window.confirm("Block this verified employee? They will be logged out and cannot open the app until re-verified.")) {
+      return;
+    }
 
     setDecliningIds((prev) => new Set([...prev, requestId]));
 
@@ -956,15 +977,15 @@ useEffect(() => {
         setEmployeeRegRequests((prev) =>
           prev
             .map((item) =>
-              item.id === requestId ? { ...item, status: 'rejected' as 'rejected' } : item
+              item.id === requestId ? { ...item, status: "rejected" as const } : item
             )
             .sort(sortByLatestDate)
         );
       } else {
-        setError(response.message || "Failed to decline employee.");
+        window.alert(response.message || "Failed to decline employee.");
       }
     } catch (err) {
-      setError("Failed to decline employee. Please try again.");
+      window.alert("Failed to decline employee. Please try again.");
       console.error("Decline Error:", err);
     } finally {
       setDecliningIds((prev) => {
@@ -2102,50 +2123,48 @@ const filteredItems =
                             Email: {employeeItem.employeeMail}
                           </div>
                           <div className={`w-[33.33%] flex justify-center items-center`}>
-                            {employeeItem.status === "pending" ? (
-                              <div className="flex space-x-2">
-                                {/* Verify Button */}
+                            <div className="flex items-center justify-center gap-2">
+                              {employeeItem.status !== "pending" && (
                                 <div
-                                  onClick={() => handleVerifyEmployee(employeeItem.id)}
-                                  className={`bg-green-100 hover:bg-green-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center ${verifyingIds.has(employeeItem.id) ? "cursor-not-allowed opacity-70" : ""
-                                    }`}
+                                  className={`text-[#000000] ${employeeItem.status === "accepted"
+                                      ? "rounded-full bg-[#A3FFA1] p-2"
+                                      : "bg-[#FFB2A3] rounded-full p-2"
+                                    } font-normal text-[12px] -tracking-[0.02rem]`}
+                                >
+                                  {employeeItem.status === "accepted" ? (
+                                    <div className="flex gap-x-2 items-center font-semibold">
+                                      Verified
+                                      <FaCircleCheck size={15} color="#14EB0C" />
+                                    </div>
+                                  ) : (
+                                    <div className="flex gap-x-2 items-center font-semibold">
+                                      Rejected
+                                      <IoCloseCircle size={20} color="#F5310A" />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {(employeeItem.status === "pending" || employeeItem.status === "rejected") && (
+                                <div
+                                  onClick={() => handleVerifyEmployee(employeeItem.id, employeeItem.status)}
+                                  className={`bg-green-100 hover:bg-green-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center ${verifyingIds.has(employeeItem.id) ? "cursor-not-allowed opacity-70" : ""}`}
                                 >
                                   <span className="text-green-500 font-semibold text-[12px]">
-                                    {verifyingIds.has(employeeItem.id) ? "Verifying..." : "Verify"}
+                                    {verifyingIds.has(employeeItem.id) ? "Verifying..." : employeeItem.status === "rejected" ? "Re-verify" : "Verify"}
                                   </span>
                                 </div>
-
-                                {/* Decline Button */}
+                              )}
+                              {(employeeItem.status === "pending" || employeeItem.status === "accepted") && (
                                 <div
-                                  onClick={() => handleDeclineEmployee(employeeItem.id)}
-                                  className={`bg-red-100 hover:bg-red-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center ${decliningIds.has(employeeItem.id) ? "cursor-not-allowed opacity-70" : ""
-                                    }`}
+                                  onClick={() => handleDeclineEmployee(employeeItem.id, employeeItem.status)}
+                                  className={`bg-red-100 hover:bg-red-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center ${decliningIds.has(employeeItem.id) ? "cursor-not-allowed opacity-70" : ""}`}
                                 >
                                   <span className="text-red-500 font-semibold text-[12px]">
-                                    {decliningIds.has(employeeItem.id) ? "Declining..." : "Decline"}
+                                    {decliningIds.has(employeeItem.id) ? "Declining..." : employeeItem.status === "accepted" ? "Block" : "Decline"}
                                   </span>
                                 </div>
-                              </div>
-                            ) : (
-                              <div
-                                className={`text-[#000000] ${employeeItem.status === "accepted"
-                                    ? "rounded-full bg-[#A3FFA1] p-2"
-                                    : "bg-[#FFB2A3] rounded-full p-2"
-                                  } font-normal text-[12px] -tracking-[0.02rem]`}
-                              >
-                                {employeeItem.status === "accepted" ? (
-                                  <div className="flex gap-x-2 items-center font-semibold">
-                                    Verified
-                                    <FaCircleCheck size={15} color="#14EB0C" />
-                                  </div>
-                                ) : (
-                                  <div className="flex gap-x-2 items-center font-semibold">
-                                    Rejected
-                                    <IoCloseCircle size={20} color="#F5310A" />
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>

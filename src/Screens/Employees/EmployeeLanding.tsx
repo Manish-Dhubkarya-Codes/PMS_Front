@@ -222,6 +222,19 @@ const EmployeeLanding: React.FC = () => {
   }, [connected, emitEvent, employeeData?.employeeId]);
 
   useEffect(() => {
+    if (!connected) return;
+    const myId = employeeData?.employeeId ?? readStoredUserData()?.employeeId;
+    const handleBlocked = (data: { employeeId?: string | number }) => {
+      if (myId != null && String(data?.employeeId) === String(myId)) {
+        if (contextLogout) contextLogout();
+        window.location.href = "/login-reg";
+      }
+    };
+    const off = onEvent("employeeBlocked", handleBlocked);
+    return () => off?.();
+  }, [connected, onEvent, employeeData?.employeeId, contextLogout]);
+
+  useEffect(() => {
   if (employeeRequests.length > 0) {
     fetchUnreadForRequests();
   }
