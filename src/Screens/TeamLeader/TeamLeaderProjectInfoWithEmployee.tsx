@@ -17,7 +17,7 @@ import {
   FaFileWord,
   FaInfoCircle,
 } from "react-icons/fa";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { FiDownload, FiX, FiZoomIn } from "react-icons/fi";
 import { RiTimeLine } from "react-icons/ri";
 import { TbListDetails } from "react-icons/tb";
@@ -32,7 +32,7 @@ import { matchesChatMessage, playChatNotificationSound, safeSocketEmit, seenByEm
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 import { Commet } from "react-loading-indicators";
-import { MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply, MdBlock } from "react-icons/md";
+import { MdDelete, MdEdit, MdOutlineDoubleArrow, MdOutlineReply, MdBlock, MdSwapHoriz } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
@@ -132,6 +132,7 @@ const TeamLeaderProjectInfoWithEmployee: React.FC = () => {
     unlockChatNotificationSound();
   }, []);
   const location = useLocation();
+  const navigate = useNavigate();
   const { item } = location.state || {};
   const storedUserData = localStorage.getItem("userData");
   const parsedData = storedUserData ? JSON.parse(atob(storedUserData)) : null;
@@ -1490,7 +1491,7 @@ const getSenderInfo = (msg: ChatMessage) =>
                 </div>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex justify-end ">
+                  <div className="flex justify-end items-center gap-2 flex-wrap">
  <div className="flex items-center w-fit gap-2 px-3 py-1 bg-gray-50 border border-gray-200 rounded-full transition-all duration-200 cursor-default">
   {/* Live Indicator Dot */}
   <span className="flex w-2 h-2 bg-emerald-500 rounded-full"></span>
@@ -1499,6 +1500,22 @@ const getSenderInfo = (msg: ChatMessage) =>
     Talking with <span className="font-semibold text-gray-900">Employee</span>
   </p>
 </div>
+                  <div
+                    onClick={() =>
+                      navigate("/teamleaderprojectinfo", {
+                        state: {
+                          item: projectDetails || item,
+                        },
+                      })
+                    }
+                    className="flex cursor-pointer items-center w-fit gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-sm text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-all duration-200"
+                  >
+                    <MdSwapHoriz size={16} />
+                    <span>
+                      Switch to{" "}
+                      <span className="font-semibold">Client & Head</span>
+                    </span>
+                  </div>
 </div>
 <div
   className={`w-full md:min-h-[400px] min-h-[300px] md:max-h-[650px] max-h-[550px] flex flex-col items-center justify-between pb-4 

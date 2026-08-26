@@ -23,7 +23,7 @@ import {
 } from "react-icons/fa";
 import { FaFilePdf } from "react-icons/fa6";
 
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { FiDownload, FiX, FiZoomIn } from "react-icons/fi";
 import { RiTimeLine } from "react-icons/ri";
 import { TbListDetails } from "react-icons/tb";
@@ -37,7 +37,7 @@ import { applySeenByUpdate, playChatNotificationSound, scrollChatToBottom, seenB
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
-import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete, MdBlock } from "react-icons/md";
+import { MdOutlineDoubleArrow, MdOutlineReply, MdEdit, MdDelete, MdBlock, MdSwapHoriz } from "react-icons/md";
 import { BsThreeDotsVertical } from "react-icons/bs";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
@@ -174,6 +174,7 @@ const TeamLeaderProjectInfo: React.FC = () => {
   }, []);
   const [selectedMention, setSelectedMention] = useState<ChatMessage["mention"] | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { item: stateItem } = (location.state as { item?: any }) || {};
   // Support both landing navigation state and ?projectId= URL open
@@ -1988,7 +1989,7 @@ useEffect(() => {
             
             {/* chatbox */}
             <div className="space-y-2">
-                        <div className="flex justify-end ">
+                        <div className="flex justify-end items-center gap-2 flex-wrap">
  <div className="flex items-center w-fit gap-2 px-3 py-1 bg-gray-50 border border-gray-200 rounded-full transition-all duration-200 cursor-default">
   {/* Live Indicator Dot */}
   <span className="flex w-2 h-2 bg-emerald-500 rounded-full"></span>
@@ -1997,6 +1998,22 @@ useEffect(() => {
     Talking with <span className="font-semibold text-gray-900">Client</span> & <span className="font-semibold text-gray-900">Head</span>
   </p>
 </div>
+                          <div
+                            onClick={() =>
+                              navigate("/teamleaderprojectinfo_withemployee", {
+                                state: {
+                                  item: projectDetails || item,
+                                },
+                              })
+                            }
+                            className="flex items-center w-fit gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-sm text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-all duration-200 cursor-pointer"
+                          >
+                            <MdSwapHoriz size={16} />
+                            <span>
+                              Switch to{" "}
+                              <span className="font-semibold">Employee</span>
+                            </span>
+                          </div>
 </div>
            <div
   className={`w-full md:min-h-[400px] min-h-[300px] md:max-h-[650px] max-h-[550px] flex flex-col items-center justify-between pb-4 
