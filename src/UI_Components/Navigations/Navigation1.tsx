@@ -14,6 +14,7 @@ interface TabsProps {
   totalUnreadCompleted?: number;
   totalPendingVerify?: number;
   centered?: boolean;
+  scrollable?: boolean;
 }
 
 const Navigation1: React.FC<TabsProps> = ({ 
@@ -29,14 +30,24 @@ const Navigation1: React.FC<TabsProps> = ({
   totalUnreadRequested,
   totalUnreadCompleted,
   totalPendingVerify,
-  centered = false
+  centered = false,
+  scrollable = false
 }) => {
   return (
-    <div className={`${centered ? "w-max mx-auto py-2 px-0 flex justify-center overflow-visible" : "w-full py-3 pl-8 pr-4 overflow-x-auto overflow-y-visible"} no-scrollbar`}>
-      <div
-        className="inline-flex pl-2"
-        style={{ transform: "rotate(0.2deg)" }}
-      >
+    <div
+      className={
+        scrollable
+          ? "w-full max-w-full min-w-0 py-3 overflow-x-auto overflow-y-hidden overscroll-x-contain no-scrollbar"
+          : centered
+            ? "w-max mx-auto py-2 px-0 flex justify-center overflow-visible no-scrollbar"
+            : "w-full py-3 pl-8 pr-4 overflow-x-auto overflow-y-visible no-scrollbar"
+      }
+    >
+      <div className={scrollable ? "flex w-max justify-start pl-8 pr-12" : undefined}>
+        <div
+          className={`inline-flex ${scrollable ? "pl-3" : "pl-2"}`}
+          style={{ transform: "rotate(0.2deg)" }}
+        >
         {tabs.map((tab, index) => {
           const isActive = activeTab === tab;
           const zIndex = tabs.length - index;
@@ -70,7 +81,7 @@ const Navigation1: React.FC<TabsProps> = ({
               data-nav-start={index === 0 ? "true" : undefined}
               onClick={() => setActiveTab(tab)}
               className={`relative font-dmsans text-black flex items-center justify-center border-[1.5px] border-[#2C6BC1]
-                cursor-pointer select-none rounded-l-md rounded-r-md whitespace-nowrap
+                cursor-pointer select-none rounded-l-md rounded-r-md whitespace-nowrap shrink-0
                 text-[10px] sm:text-[12px] md:text-[14px] lg:text-[15px]
                 h-[30px] sm:h-[34px] md:h-[36px] lg:h-[40px]
                 ml-[-10px]
@@ -94,6 +105,7 @@ const Navigation1: React.FC<TabsProps> = ({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

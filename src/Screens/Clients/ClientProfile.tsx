@@ -92,7 +92,11 @@ const headChats = getChatArray(projectData.headchats);
   const tlChats = getChatArray(projectData.tlchats);
   const tlAudios = getChatArray(projectData.tlaudios);
   const headName = projectData.headname || "Head";
-  const teamLeaderName = projectData.teamleadername || "Team Leader";
+  const teamLeaderName =
+    projectData.teamLeaderName ||
+    projectData.teamleadername ||
+    projectData.employeeName ||
+    "";
 
   let unreadFromHead = 0;
   let unreadFromTL = 0;

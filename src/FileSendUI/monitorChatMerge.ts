@@ -2,6 +2,7 @@ import { buildChatFilePayload } from "./chatFileUtils";
 import { fileUrlKey } from "./chatIdentity";
 import { toAbsoluteFileUrl } from "./fileUrl";
 import { serverURL } from "../BackendConnections/FetchBackendServices";
+import { sameChatTimestamp } from "../utils/chatLive";
 
 function sameFile(a?: string, b?: string) {
   const ka = fileUrlKey(a);
@@ -236,7 +237,7 @@ export function formatMonitorSenderLabel(options: {
   // Avoid using role words as a person's name
   const isGeneric =
     !raw ||
-    /^(you|team leader|teamleader|employee|monitor|unknown)$/i.test(raw);
+    /^(you|team leader|teamleader|employee|unknown)$/i.test(raw);
 
   if (!isGeneric) {
     return { name: raw, role };
@@ -254,4 +255,43 @@ export function formatMonitorSenderLabel(options: {
 
 export function absoluteMonitorFileUrl(url: string) {
   return toAbsoluteFileUrl(url, serverURL);
+}
+
+/** Merge a REST/socket chat snapshot with in-flight optimistic rows. */
+export function mergeMonitorSnapshot<T extends Record<string, any>>(
+  serverMessages: T[],
+  prev: T[],
+): T[] {
+  if (serverMessages.length === 0 && prev.length > 0) return prev;
+  const localOnly = prev.filter((local) => {
+    if (!local.tempId && !local.file && !local.message) return false;
+    return !serverMessages.some((serverMsg) => {
+      if (local.tempId && serverMsg.tempId && local.tempId === serverMsg.tempId) return true;
+      if (local.messageId && serverMsg.messageId && local.messageId === serverMsg.messageId) return true;
+      if (local.file?.url && serverMsg.file?.url && sameFile(local.file.url, serverMsg.file.url)) {
+        return true;
+      }
+      if (
+        local.type === "file" &&
+        serverMsg.type === "file" &&
+        local.file?.name &&
+        local.file.name === serverMsg.file?.name &&
+        sameChatTimestamp(local.timestamp, serverMsg.timestamp)
+      ) {
+        return true;
+      }
+      if (
+        local.type === "text" &&
+        serverMsg.type === "text" &&
+        local.message === serverMsg.message &&
+        sameChatTimestamp(local.timestamp, serverMsg.timestamp)
+      ) {
+        return true;
+      }
+      return false;
+    });
+  });
+  return [...serverMessages, ...localOnly].sort((a, b) =>
+    String(a.timestamp).localeCompare(String(b.timestamp)),
+  );
 }

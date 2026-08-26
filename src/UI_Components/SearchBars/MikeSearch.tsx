@@ -87,7 +87,7 @@ const MikeSearch: React.FC<MikeSearchProps> = ({
   onCancelEdit,
   projectId,
   isMonitorRestricted = false,
-  restrictionMessage = "Only the assigned Project Monitor can chat here",
+  restrictionMessage = "Chat is not available",
 }) => {
 
   
@@ -953,7 +953,7 @@ const handleSend = () => {
     <div className="w-full flex relative flex-col items-center">
       {isMonitorRestricted && (
         <div className="w-full mb-2 text-center py-2 bg-red-100 text-red-700 text-xs font-medium rounded-md shadow-sm">
-          Chat is restricted to the Project Monitor only
+          Chat is not available
         </div>
       )}
       <div className="relative w-full flex flex-col items-center">

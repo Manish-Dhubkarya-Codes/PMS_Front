@@ -29,7 +29,7 @@ import {
 } from "react-icons/fa";
 import DOMPurify from "dompurify";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import { playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { applySeenByUpdate, playChatNotificationSound, scrollChatToBottom, seenByRole, seenStorageType, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from "uuid";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { useGlobalPush } from "../../hooks/useGlobalPush";
@@ -49,9 +49,15 @@ import {
 } from "../../FileSendUI/chatMessageMerge";
 import {
   dedupeLoadedMessages,
+  hasVisibleChatContent,
   isLeftForViewer,
+  isSystemChatMessage,
+  keepLiveChatRows,
+  parseChatJson,
+  pickPersonName,
   resolveRoleFromParsed,
   roleFlags,
+  storedChatFileData,
   type ChatRole,
 } from "../../FileSendUI/chatIdentity";
 import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
@@ -83,6 +89,7 @@ interface ChatMessageProps {
   isDeleted?: boolean;
   caption?: string;
   deletedAt?: string;
+  senderName?: string;
 }
 
 interface ClientProjectInfoProps {
@@ -168,6 +175,7 @@ const isWithinEditWindow = (msg: ChatMessageProps): boolean => {
   const [isProjectSubmitted, setIsProjectSubmitted] = useState<boolean>(false);
   const autoScrollRef = useRef<boolean>(true);
   const prevMessagesLengthRef = useRef(0);
+  const prevUploadCountRef = useRef(0);
   const location = useLocation();
   const [headPic, setHeadPicture] = useState<string>("");
   const [headName, setHeadName] = useState<string>("");
@@ -808,8 +816,8 @@ const fetchProjectData = async (projId: string, isPolling = false) => {
     if (projectResponse && projectResponse.data) {
       const project = projectResponse.data;
       setSelectStream(project.workstream || "");
-      setTeamLeaderName(project.teamLeaderName || "");
-      setTeamLeaderPic(project.teamLeaderPic || "");
+      setTeamLeaderName(pickPersonName(project));
+      setTeamLeaderPic(project.teamLeaderPic || project.teamleaderpic || "");
       setTitle(project.title || "");
       setSubmissionDate(project.deadline || "");
       setBudget(project.budget || "");
@@ -845,98 +853,62 @@ console.log("STATUS FROM FETCH →", project.status);
       let newMessages: ChatMessageProps[] = [];
 
 const parseSection = (
-  chats: string[] | undefined,
-  audios: string[] | undefined,
+  chats: unknown[] | undefined,
+  audios: unknown[] | undefined,
   columnDefault: ChatRole,
 ) => {
   const messages: ChatMessageProps[] = [];
-  const max = Math.max(chats?.length || 0, audios?.length || 0);
 
-  for (let i = 0; i < max; i++) {
-    // === CHATS ===
-    if (i < (chats?.length || 0)) {
-      let chatStr = chats![i];
-      if (typeof chatStr === "string") {
-        try {
-          let parsed = JSON.parse(chatStr);
-          if (typeof parsed === "string") parsed = JSON.parse(parsed);
+  const pushParsed = (raw: unknown, index: number, forceFile: boolean) => {
+    const parsed = parseChatJson(raw);
+    if (!parsed || isSystemChatMessage(parsed)) return;
 
-          const timestamp = parsed.timestamp || new Date().toISOString();
-          const isDeleted = parsed.isDeleted === true;
-          const role = resolveRoleFromParsed(parsed, columnDefault);
-          const flags = roleFlags(role);
+    const timestamp = parsed.timestamp || new Date().toISOString();
+    const isDeleted = parsed.isDeleted === true;
+    const role = resolveRoleFromParsed(parsed, columnDefault);
+    const flags = roleFlags(role);
+    const isText = !forceFile && parsed.type === "text";
+    const fileData = storedChatFileData(parsed);
 
-          const msg: ChatMessageProps = {
-            type: parsed.type === "text" ? "text" : "file",
-            isLeft: isLeftForViewer("client", role),
-            ...flags,
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            messageId: parsed.messageId,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-            isDeleted,
-            deletedAt: parsed.deletedAt,
-            edited: parsed.edited || false,
-            editedAt: parsed.editedAt,
-            caption: parsed.caption,
-          };
+    const msg: ChatMessageProps = {
+      type: isText ? "text" : "file",
+      isLeft: isLeftForViewer("client", role),
+      ...flags,
+      timestamp,
+      seen_by: Array.isArray(parsed.seen_by) ? parsed.seen_by : [],
+      id: index,
+      messageId: parsed.messageId,
+      mention: parsed.mention || null,
+      replyTo: parsed.replyTo || null,
+      isDeleted,
+      deletedAt: parsed.deletedAt,
+      edited: parsed.edited || false,
+      editedAt: parsed.editedAt,
+      caption: parsed.caption,
+      senderName: pickPersonName(parsed),
+    };
 
-          if (!isDeleted) {
-            if (parsed.type === "text") {
-              msg.message = parsed.data;
-            } else if (parsed.data?.name && parsed.data?.url) {
-              msg.file = buildChatFilePayload(parsed.data).file;
-            }
-          }
-          messages.push(msg);
-        } catch (e) {
-          console.error("Error parsing chat:", e);
-        }
+    if (!isDeleted) {
+      if (isText) {
+        msg.message =
+          typeof parsed.data === "string"
+            ? parsed.data
+            : parsed.message || "";
+      } else if (fileData?.url || fileData?.name) {
+        msg.file = buildChatFilePayload({
+          name: fileData.name,
+          url: fileData.url,
+          type: fileData.type,
+        }).file;
       }
     }
 
-    // === AUDIOS / FILES ===
-    if (i < (audios?.length || 0)) {
-      let audioStr = audios![i];
-      if (typeof audioStr === "string") {
-        try {
-          let parsed = JSON.parse(audioStr);
-          if (typeof parsed === "string") parsed = JSON.parse(parsed);
+    if (!hasVisibleChatContent(msg)) return;
+    messages.push(msg);
+  };
 
-          const timestamp = parsed.timestamp || new Date().toISOString();
-          const isDeleted = parsed.isDeleted === true;
-          const role = resolveRoleFromParsed(parsed, columnDefault);
-          const flags = roleFlags(role);
-
-          const msg: ChatMessageProps = {
-            type: "file",
-            isLeft: isLeftForViewer("client", role),
-            ...flags,
-            timestamp,
-            seen_by: parsed.seen_by || [],
-            id: i,
-            messageId: parsed.messageId,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-            isDeleted,
-            deletedAt: parsed.deletedAt,
-            edited: parsed.edited || false,
-            editedAt: parsed.editedAt,
-            caption: parsed.caption,
-            file:
-              !isDeleted && parsed.data?.name && parsed.data?.url
-                ? buildChatFilePayload(parsed.data).file
-                : undefined,
-          };
-          messages.push(msg);
-        } catch (e) {
-          console.error("Error parsing audio:", e);
-        }
-      }
-    }
-  }
+  (chats || []).forEach((chat, index) => pushParsed(chat, index, false));
+  (audios || []).forEach((audio, index) => pushParsed(audio, index, true));
   return messages;
 };
 
@@ -961,7 +933,7 @@ const parseSection = (
         ...headMsgs,
         ...tlMsgs,
       ]);
-      setChatMessages(newMessages);
+      setChatMessages((prev) => keepLiveChatRows(newMessages, prev));
       processUpdates(newMessages);
       return project;
     }
@@ -1143,10 +1115,17 @@ useEffect(() => {
   const offAck = onEvent("messageAck", (data: any) => {
     onChatEvent(data);
   });
+  const offSeen = onEvent("messageSeen", (data: any) => {
+    if (projectId && data?.projectId && String(data.projectId) !== String(projectId)) {
+      return;
+    }
+    setChatMessages((prev) => applySeenByUpdate(prev, data));
+  });
 
   return () => {
     offNew?.();
     offAck?.();
+    offSeen?.();
   };
 }, [socket, playNotification, onEvent, projectId]);
 
@@ -1290,22 +1269,26 @@ const handleClientEdited = (data: any) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             const target = entry.target as HTMLElement;
+            const messageId = target.dataset.messageId;
+            const timestamp = target.dataset.timestamp;
             const idx = target.dataset.idx;
-            if (idx) {
-              const msg = chatMessages[parseInt(idx)];
+            const msg =
+              chatMessages.find(
+                (m) =>
+                  (messageId && m.messageId && String(m.messageId) === String(messageId)) ||
+                  (timestamp && m.timestamp === timestamp),
+              ) || (idx ? chatMessages[parseInt(idx)] : undefined);
               const viewer = "client";
               if (
                 msg &&
                 msg.isLeft &&
                 !msg.fromClient &&
-                !msg.seen_by.includes(viewer) &&
-                msg.id !== undefined
+                !seenByRole(msg.seen_by, viewer)
               ) {
                 if (!requiresPreview(msg)) {
                   markMessageAsSeen(msg);
                 }
               }
-            }
           }
         });
       },
@@ -1380,43 +1363,36 @@ useEffect(() => {
     return true;
   };
   const markMessageAsSeen = async (msg: ChatMessageProps) => {
-    if (!projectId || msg.id === undefined) {
-      return;
-    }
-    let messageType =
-      msg.type === "file" &&
-      normalizeMimeType(msg.file?.type, msg.file?.name).startsWith("audio/")
-        ? "audio"
-        : "chat";
-    const fromClient = msg.fromClient;
+    if (!projectId) return;
+    if (msg.id === undefined && !msg.messageId && !msg.timestamp) return;
     const viewer = "client";
+    if (seenByRole(msg.seen_by, viewer)) return;
     try {
       const response = await postData(
         `clientproject/mark_message_seen/${projectId}`,
         {
           index: msg.id,
-          fromClient,
+          fromClient: msg.fromClient,
           fromHead: msg.fromHead,
           fromTeamLeader: msg.fromTeamLeader,
-          type: messageType,
+          type: seenStorageType(msg),
           viewer,
           timestamp: msg.timestamp,
+          messageId: msg.messageId,
         }
       );
       if (response.status) {
         setChatMessages((prev) =>
-          prev.map((m) =>
-            (m.id === msg.id &&
-              m.fromClient === fromClient &&
-              m.fromHead === msg.fromHead &&
-              m.fromTeamLeader === msg.fromTeamLeader) ||
-              (m.timestamp === msg.timestamp &&
-                m.fromClient === fromClient &&
-                m.fromHead === msg.fromHead &&
-                m.fromTeamLeader === msg.fromTeamLeader)
-              ? { ...m, seen_by: [...new Set([...m.seen_by, viewer])] }
-              : m
-          )
+          applySeenByUpdate(prev, {
+            fromClient: msg.fromClient,
+            fromHead: msg.fromHead,
+            fromTeamLeader: msg.fromTeamLeader,
+            timestamp: msg.timestamp,
+            messageId: msg.messageId,
+            index: msg.id,
+            seen_by: response.seen_by,
+            viewer,
+          })
         );
       } else {
         console.error("Failed to mark message as seen:", response.message);
@@ -1426,18 +1402,40 @@ useEffect(() => {
     }
   };
   useEffect(() => {
-    if (chatContainerRef.current) {
-      if (autoScrollRef.current) {
-        chatContainerRef.current.scrollTop =
-          chatContainerRef.current.scrollHeight;
-        setShowScrollToBottom(false);
-      }
-    }
-    if (chatMessages.length > prevMessagesLengthRef.current) {
+    const el = chatContainerRef.current;
+    const uploadCount = Object.keys(uploadTasks).length;
+    if (
+      chatMessages.length > prevMessagesLengthRef.current ||
+      uploadCount > prevUploadCountRef.current
+    ) {
       autoScrollRef.current = true;
-      prevMessagesLengthRef.current = chatMessages.length;
     }
-  }, [chatMessages, loading]);
+    prevMessagesLengthRef.current = chatMessages.length;
+    prevUploadCountRef.current = uploadCount;
+    if (el && autoScrollRef.current) {
+      scrollChatToBottom(el);
+      setShowScrollToBottom(false);
+    }
+  }, [chatMessages, uploadTasks, loading, previewHeight]);
+  useEffect(() => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    const keepPinned = () => {
+      if (autoScrollRef.current) scrollChatToBottom(el);
+    };
+    el.addEventListener("load", keepPinned, true);
+    el.addEventListener("loadeddata", keepPinned, true);
+    const ro =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(keepPinned);
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("load", keepPinned, true);
+      el.removeEventListener("loadeddata", keepPinned, true);
+      ro?.disconnect();
+    };
+  }, []);
   useEffect(() => {
     const chatContainer = chatContainerRef.current;
     const handleScroll = () => {
@@ -1455,11 +1453,9 @@ useEffect(() => {
     return () => chatContainer?.removeEventListener("scroll", handleScroll);
   }, [chatMessages]);
   const scrollToBottom = () => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop =
-        chatContainerRef.current.scrollHeight;
-      setShowScrollToBottom(false);
-    }
+    autoScrollRef.current = true;
+    scrollChatToBottom(chatContainerRef.current);
+    setShowScrollToBottom(false);
   };
   useEffect(() => {
     if (isDrawerOpen || isModalOpen) {
@@ -1495,22 +1491,22 @@ useEffect(() => {
     } else if (msg.fromTeamLeader) {
       return {
         role: "Team Leader",
-        name: teamLeaderName || "Unknown Team Leader",
+        name: pickPersonName(msg.senderName, teamLeaderName),
       };
     }
     return { role: "Unknown", name: "Unknown" };
   };
   const getSeenText = (msg: ChatMessageProps) => {
-    if (msg.seen_by.length === 0) return "Not seen yet";
+    if (!msg.seen_by || msg.seen_by.length === 0) return "Not seen yet";
     let text = "Seen by ";
-    if (msg.seen_by.includes("head")) text += `Head (${headName || "head"}), `;
-    if (msg.seen_by.includes("tl"))
+    if (seenByRole(msg.seen_by, "head")) text += `Head (${headName || "head"}), `;
+    if (seenByRole(msg.seen_by, "tl"))
       text += `Team Leader (${teamLeaderName || "TL"})`;
     if (text.endsWith(", ")) text = text.slice(0, -2);
     return text;
   };
   const isAllSeen = (msg: ChatMessageProps) => {
-    return msg.seen_by.includes("head") && msg.seen_by.includes("tl");
+    return seenByRole(msg.seen_by, "head") && seenByRole(msg.seen_by, "tl");
   };
   const handleFileUpload = async () => {
     if (
@@ -1899,6 +1895,9 @@ const handleSendMessage = async (
             caption: caption || message.trim(),
             replyTo: replyToMessage || null,
           });
+          autoScrollRef.current = true;
+          scrollChatToBottom(chatContainerRef.current);
+          setShowScrollToBottom(false);
           setNewMessage("");
           setReplyToMessage(null);
         }
@@ -1987,7 +1986,7 @@ const handleSendMessage = async (
       setIsModalOpen(true);
       const isReceived = msg.isLeft && !msg.fromClient;
       const viewer = "client";
-      if (isReceived && !msg.seen_by.includes(viewer) && msg.id !== undefined) {
+      if (isReceived && !seenByRole(msg.seen_by, viewer)) {
         markMessageAsSeen(msg);
       }
     }
@@ -2043,9 +2042,9 @@ const handleSendMessage = async (
       );
     }
   };
-  let displayedMessages = chatMessages;
+  let displayedMessages = chatMessages.filter(hasVisibleChatContent);
   if (currentTab === "files") {
-    displayedMessages = chatMessages.filter((msg) => msg.type === "file");
+    displayedMessages = displayedMessages.filter((msg) => msg.type === "file");
   }
   const formatDate = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -2489,6 +2488,11 @@ const handleSendMessage = async (
                           <div
                             ref={(el) => {
                               messageRefs.current[`${index}`] = el;
+                              if (el) {
+                                if (msg.messageId) el.dataset.messageId = String(msg.messageId);
+                                if (msg.timestamp) el.dataset.timestamp = msg.timestamp;
+                                el.dataset.idx = String(index);
+                              }
                             }}
                             className={`flex ${msg.isLeft ? "justify-start" : "justify-end"
                               } my-5`}
@@ -2547,6 +2551,9 @@ const handleSendMessage = async (
                                   <div className="h-4 w-[2px] bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
 
                                   <div className="flex items-center gap-1 bg-[#f6fff2] backdrop-blur-sm px-2 py-0.5 rounded-r-sm border-l border-white/50">
+                                    {sender.name &&
+                                      sender.name !== sender.role && (
+                                        <>
                                     {/* Sender Name */}
                                     <span className="text-[9px] font-black text-blue-950 tracking-wide uppercase font-sans">
                                       {sender.name}
@@ -2556,6 +2563,8 @@ const handleSendMessage = async (
                                     <span className="text-[8px] text-blue-300 font-mono select-none">
                                       |
                                     </span>
+                                        </>
+                                      )}
 
                                     {/* Sender Role - High Contrast Red */}
                                     <div className="flex items-center gap-1.5">

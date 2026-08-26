@@ -19,7 +19,7 @@ import { FaCircleCheck, FaRegFolder } from "react-icons/fa6";
 import { IoCloseCircle } from "react-icons/io5";
 import AllEmployeeList from "../Employees/AllEmployeeList";
 import { useSocket } from "../../BackendConnections/useSocket";
-import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { countUnreadMessages, isNotifiableChatMessage, isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { readStoredUserData } from "../../utils/authStorage";
 import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
@@ -162,33 +162,30 @@ useEffect(() => {
   // Memoized handlers to prevent re-attachment issues
   const handleNewMessage = useCallback((data: { fromRole: 'client' | 'tl' | 'head'; msg: any; projectId?: string }) => {
     if (!data.projectId || data.fromRole === 'head') return;
+    if (!isNotifiableChatMessage(data.msg, "head")) return;
     setProjectDetails((prev) => {
       const updatedProjects = prev.map((proj) => {
-        if (proj.project_id !== data.projectId) return proj;
+        if (String(proj.project_id) !== String(data.projectId)) return proj;
         let newUnreadFromClient = proj.unreadFromClient;
         let newUnreadFromTL = proj.unreadFromTL;
         let newHasMentionFromClient = proj.hasMentionFromClient;
         let newHasMentionFromTL = proj.hasMentionFromTL;
         let incremented = false;
         if (data.fromRole === 'client') {
-          if (!data.msg.seen_by?.includes('head')) {
-            newUnreadFromClient++;
-            incremented = true;
-            if (data.msg.mention?.type === 'head') {
-              newHasMentionFromClient = true;
-            }
+          newUnreadFromClient++;
+          incremented = true;
+          if (data.msg.mention?.type === 'head') {
+            newHasMentionFromClient = true;
           }
         } else if (data.fromRole === 'tl') {
-          if (!data.msg.seen_by?.includes('head')) {
-            newUnreadFromTL++;
-            incremented = true;
-            if (data.msg.mention?.type === 'head') {
-              newHasMentionFromTL = true;
-            }
+          newUnreadFromTL++;
+          incremented = true;
+          if (data.msg.mention?.type === 'head') {
+            newHasMentionFromTL = true;
           }
         }
         if (incremented) {
-          playNotificationSound(); // Play sound on increment
+          playNotificationSound();
         }
         return {
           ...proj,
@@ -341,37 +338,23 @@ const fetchProjects = useCallback(async () => {
             const tlChats = proj.tlchats || [];
             const tlAudios = proj.tlaudios || [];
             const clientName = proj.clientName || "Client";
-            const teamLeaderName = proj.teamLeaderName || "Team Leader";
-            let unreadFromClient = 0;
-            let unreadFromTL = 0;
-            let hasMentionFromClient = false;
-            let hasMentionFromTL = false;
-            [...clientChats, ...clientAudios].forEach((chat: string) => {
-              try {
-                const parsed = JSON.parse(chat);
-                if (!parsed.seen_by || !parsed.seen_by.includes("head")) {
-                  unreadFromClient++;
-                  if (parsed.mention && parsed.mention.type === "head") {
-                    hasMentionFromClient = true;
-                  }
-                }
-              } catch (err) {
-                console.error(err);
-              }
-            });
-            [...tlChats, ...tlAudios].forEach((chat: string) => {
-              try {
-                const parsed = JSON.parse(chat);
-                if (!parsed.seen_by || !parsed.seen_by.includes("head")) {
-                  unreadFromTL++;
-                  if (parsed.mention && parsed.mention.type === "head") {
-                    hasMentionFromTL = true;
-                  }
-                }
-              } catch (err) {
-                console.error(err);
-              }
-            });
+            const teamLeaderName =
+              proj.teamLeaderName ||
+              proj.teamleadername ||
+              proj.employeeName ||
+              "";
+            const clientUnread = countUnreadMessages(
+              [...clientChats, ...clientAudios],
+              "head",
+            );
+            const tlUnread = countUnreadMessages(
+              [...tlChats, ...tlAudios],
+              "head",
+            );
+            const unreadFromClient = clientUnread.count;
+            const unreadFromTL = tlUnread.count;
+            const hasMentionFromClient = clientUnread.hasMention;
+            const hasMentionFromTL = tlUnread.hasMention;
             const progressResponse = await getData(`clientproject/get_progress/${project.project_id}`);
             let progressPercentage = 0;
             if (progressResponse.status && progressResponse.progress) {

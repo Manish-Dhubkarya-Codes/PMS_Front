@@ -33,7 +33,7 @@ import {
   getData,
 } from "../../BackendConnections/FetchBackendServices";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import { playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { applySeenByUpdate, playChatNotificationSound, scrollChatToBottom, seenByRole, seenStorageType, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 // import { useGlobalPush } from "../../hooks/useGlobalPush";
@@ -53,9 +53,14 @@ import {
 } from "../../FileSendUI/chatMessageMerge";
 import {
   dedupeLoadedMessages,
+  hasVisibleChatContent,
   isLeftForViewer,
+  isSystemChatMessage,
+  keepLiveChatRows,
+  parseChatJson,
   resolveRoleFromParsed,
   roleFlags,
+  storedChatFileData,
   type ChatRole,
 } from "../../FileSendUI/chatIdentity";
 import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
@@ -155,6 +160,7 @@ const TeamLeaderProjectInfo: React.FC = () => {
   const [projectDetails, setProjectDetails] = useState<ProjectDetails | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const autoScrollRef = useRef<boolean>(true);
+  const prevUploadCountRef = useRef(0);
   const prevMessagesLengthRef = useRef(0);
   const [msgControl, setMsgControl] = useState<number | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -800,47 +806,18 @@ useEffect(() => {
 
 
    useEffect(() => {
-  onEvent("messageSeen", (data) => {
-    console.log("Received messageSeen data:", data);
-    let fromClient = false;
-    let fromHead = false;
-    let fromTeamLeader = false;
-    let index = data.index; // Fallback to index if available
-    let seen_by = data.seen_by;
-    let timestamp = data.timestamp; // Primary matcher: use timestamp from backend emit
-    if (data.fromRole) {
-      fromClient = data.fromRole === "client";
-      fromHead = data.fromRole === "head";
-      fromTeamLeader = data.fromRole === "tl";
-    } else {
-      fromClient = data.fromClient || false;
-      fromHead = data.fromHead || false;
-      fromTeamLeader = data.fromTeamLeader || false;
+  const offSeen = onEvent("messageSeen", (data) => {
+    if (
+      projectDetails?.project_id &&
+      data?.projectId &&
+      String(data.projectId) !== String(projectDetails.project_id)
+    ) {
+      return;
     }
-    setChatMessages((prev) => {
-      // Find target using timestamp + flags (primary) or index + flags (fallback)
-      const targetMessage = prev.find(m =>
-        (m.timestamp === timestamp && m.fromClient === fromClient && m.fromHead === fromHead && m.fromTeamLeader === fromTeamLeader) ||
-        (m.id === index && m.fromClient === fromClient && m.fromHead === fromHead && m.fromTeamLeader === fromTeamLeader)
-      );
-      if (!targetMessage) {
-        console.log("No matching message found for update");
-        return prev;
-      }
-      const updated = prev.map((m) =>
-        (m.timestamp === timestamp && m.fromClient === fromClient && m.fromHead === fromHead && m.fromTeamLeader === fromTeamLeader) ||
-        (m.id === index && m.fromClient === fromClient && m.fromHead === fromHead && m.fromTeamLeader === fromTeamLeader)
-          ? { ...m, seen_by }
-          : m
-      );
-      console.log("Updated seen_by for message:", updated.find(m =>
-        (m.timestamp === timestamp && m.fromClient === fromClient && m.fromHead === fromHead && m.fromTeamLeader === fromTeamLeader) ||
-        (m.id === index)
-      )?.seen_by);
-      return updated;
-    });
+    setChatMessages((prev) => applySeenByUpdate(prev, data));
   });
-}, [onEvent]);
+  return () => offSeen?.();
+}, [onEvent, projectDetails?.project_id]);
   useEffect(() => {
     if (projectDetails?.project_id) {
       getData(`employees/fetch_employee_by_projectid/${projectDetails.project_id}`).then((response) => {
@@ -983,25 +960,7 @@ const handleAssignSelected = async () => {
   }
 };
 
-  const handleMakeMonitor = async (employeeId: string, projectId: string) => {
-    try {
-      const response = await postData("clientproject/assign_project_monitor", {
-        employeeId,
-        projectId,
-        status: "Project Monitor",
-      });
-      if (response.status) {
-        alert("Employee assigned as Project Monitor successfully!");
-        // Optionally, update state or refresh data
-        // For example, you can fetch project requests again or update local state
-      } else {
-        alert(response.message || "Failed to assign as monitor.");
-      }
-    } catch (error) {
-      console.error("Error assigning monitor:", error);
-      alert("Error assigning monitor. Please try again.");
-    }
-  };
+
 
 const highlightMessageText = (text: string, mention: ChatMessage["mention"]) => {
   if (!text) return text;
@@ -1045,26 +1004,7 @@ const highlightMessageText = (text: string, mention: ChatMessage["mention"]) => 
   return highlighted;
 };
 
-  // NEW: Added handleRemoveMonitor function (place it after handleMakeMonitor)
-const handleRemoveMonitor = async (employeeId: string, projectId: string) => {
-  try {
-    const response = await postData("clientproject/remove_project_monitor", {
-      employeeId,
-      projectId,
-      status: "Project Monitor",
-    });
-    if (response.status) {
-      alert("Employee removed as Project Monitor successfully!");
-      // Refresh lists
-      fetchEmployeesList();
-    } else {
-      alert(response.message || "Failed to remove monitor.");
-    }
-  } catch (error) {
-    console.error("Error removing monitor:", error);
-    alert("Error removing monitor. Please try again.");
-  }
-};
+
 
   const uniqueDesignations = [...new Set(allEmployees.map(emp => emp.employeeDesignation))];
   const filteredAllEmployees = allEmployees.filter(emp => {
@@ -1082,16 +1022,21 @@ const handleRemoveMonitor = async (employeeId: string, projectId: string) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             const target = entry.target as HTMLElement;
+            const messageId = target.dataset.messageId;
+            const timestamp = target.dataset.timestamp;
             const idx = target.dataset.idx;
-            if (idx) {
-              const msg = chatMessages[parseInt(idx)];
+            const msg =
+              chatMessages.find(
+                (m) =>
+                  (messageId && m.messageId && String(m.messageId) === String(messageId)) ||
+                  (timestamp && m.timestamp === timestamp),
+              ) || (idx ? chatMessages[parseInt(idx)] : undefined);
               const viewer = "tl";
-              if (msg && msg.isLeft && !msg.seen_by.includes(viewer) && msg.id !== undefined) {
+              if (msg && msg.isLeft && !seenByRole(msg.seen_by, viewer)) {
                 if (!requiresPreview(msg)) {
                   markMessageAsSeen(msg);
                 }
               }
-            }
           }
         });
       },
@@ -1122,32 +1067,33 @@ const handleRemoveMonitor = async (employeeId: string, projectId: string) => {
     return true;
   };
 const markMessageAsSeen = async (msg: ChatMessage) => {
-  if (!projectDetails?.project_id || msg.id === undefined) return;
-  let messageType =
-    msg.type === "file" &&
-    normalizeMimeType(msg.file?.type, msg.file?.name).startsWith("audio/")
-      ? "audio"
-      : "chat";
+  if (!projectDetails?.project_id) return;
+  if (msg.id === undefined && !msg.messageId && !msg.timestamp) return;
   const viewer = "tl";
+  if (seenByRole(msg.seen_by, viewer)) return;
   try {
     const response = await postData(`clientproject/mark_message_seen/${projectDetails.project_id}`, {
       index: msg.id,
       fromClient: msg.fromClient,
       fromHead: msg.fromHead,
       fromTeamLeader: msg.fromTeamLeader,
-      type: messageType,
+      type: seenStorageType(msg),
       viewer,
-      timestamp: msg.timestamp // Ensure timestamp is sent for backend emit
+      timestamp: msg.timestamp,
+      messageId: msg.messageId,
     });
     if (response.status) {
-      // Optimistic local update using timestamp + flags for matching
       setChatMessages((prev) =>
-        prev.map((m) =>
-          (m.timestamp === msg.timestamp && m.fromClient === msg.fromClient && m.fromHead === msg.fromHead && m.fromTeamLeader === msg.fromTeamLeader) ||
-          (m.id === msg.id && m.fromClient === msg.fromClient && m.fromHead === msg.fromHead && m.fromTeamLeader === msg.fromTeamLeader)
-            ? { ...m, seen_by: [...new Set([...m.seen_by, viewer])] }
-            : m
-        )
+        applySeenByUpdate(prev, {
+          fromClient: msg.fromClient,
+          fromHead: msg.fromHead,
+          fromTeamLeader: msg.fromTeamLeader,
+          timestamp: msg.timestamp,
+          messageId: msg.messageId,
+          index: msg.id,
+          seen_by: response.seen_by,
+          viewer,
+        })
       );
     }
   } catch (error) {
@@ -1155,18 +1101,15 @@ const markMessageAsSeen = async (msg: ChatMessage) => {
   }
 };
   const getSeenText = (msg: ChatMessage) => {
-    if (msg.seen_by.length === 0) return "Not seen yet";
+    if (!msg.seen_by || msg.seen_by.length === 0) return "Not seen yet";
     let text = "Seen by ";
-    if (msg.seen_by.includes("client")) text += `Client (${projectDetails?.clientName || "Client"}), `;
-    if (msg.seen_by.includes("head")) text += `Head (${projectDetails?.headName || "Head"})`;
+    if (seenByRole(msg.seen_by, "client")) text += `Client (${projectDetails?.clientName || "Client"}), `;
+    if (seenByRole(msg.seen_by, "head")) text += `Head (${projectDetails?.headName || "Head"})`;
     if (text.endsWith(", ")) text = text.slice(0, -2);
     return text;
   };
   const isAllSeen = (msg: ChatMessage) => {
-    return (
-      msg.seen_by.includes("client") &&
-      msg.seen_by.includes("head")
-    );
+    return seenByRole(msg.seen_by, "client") && seenByRole(msg.seen_by, "head");
   };
   useEffect(() => {
     const handleResize = () => setWidth(window.innerWidth);
@@ -1175,17 +1118,40 @@ const markMessageAsSeen = async (msg: ChatMessage) => {
   }, []);
 
   useEffect(() => {
-  if (chatContainerRef.current) {
-    if (autoScrollRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-      setShowScrollToBottom(false); // Hide icon on auto-scroll
+    const el = chatContainerRef.current;
+    const uploadCount = Object.keys(uploadTasks).length;
+    if (
+      chatMessages.length > prevMessagesLengthRef.current ||
+      uploadCount > prevUploadCountRef.current
+    ) {
+      autoScrollRef.current = true;
     }
-  }
-  if (chatMessages.length > prevMessagesLengthRef.current) {
-    autoScrollRef.current = true;
     prevMessagesLengthRef.current = chatMessages.length;
-  }
-}, [chatMessages, loading]);
+    prevUploadCountRef.current = uploadCount;
+    if (el && autoScrollRef.current) {
+      scrollChatToBottom(el);
+      setShowScrollToBottom(false);
+    }
+  }, [chatMessages, uploadTasks, loading, previewHeight]);
+  useEffect(() => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    const keepPinned = () => {
+      if (autoScrollRef.current) scrollChatToBottom(el);
+    };
+    el.addEventListener("load", keepPinned, true);
+    el.addEventListener("loadeddata", keepPinned, true);
+    const ro =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(keepPinned);
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("load", keepPinned, true);
+      el.removeEventListener("loadeddata", keepPinned, true);
+      ro?.disconnect();
+    };
+  }, []);
 
 useEffect(() => {
   const chatContainer = chatContainerRef.current;
@@ -1205,10 +1171,9 @@ useEffect(() => {
 }, [chatMessages]);
 
 const scrollToBottom = () => {
-  if (chatContainerRef.current) {
-    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    setShowScrollToBottom(false); // Hide icon after scroll
-  }
+  autoScrollRef.current = true;
+  scrollChatToBottom(chatContainerRef.current);
+  setShowScrollToBottom(false);
 };
 
   const formatDate = (timestamp: string) => {
@@ -1539,6 +1504,9 @@ setReplyToMessage(null);
             caption: caption || message.trim(),
             replyTo: currentReplyTo,
           });
+          autoScrollRef.current = true;
+          scrollChatToBottom(chatContainerRef.current);
+          setShowScrollToBottom(false);
           setNewMessage("");
           setReplyToMessage(null);
         }
@@ -1572,7 +1540,7 @@ setReplyToMessage(null);
       setIsModalOpen(true);
       const isReceived = msg.isLeft;
       const viewer = "tl";
-      if (isReceived && !msg.seen_by.includes(viewer) && msg.id !== undefined) {
+      if (isReceived && !seenByRole(msg.seen_by, viewer)) {
         markMessageAsSeen(msg);
       }
     }
@@ -1689,71 +1657,60 @@ useEffect(() => {
   if (!projectDetails) return;
 
   const parseBucket = (
-    chats: string[] | undefined,
-    audios: string[] | undefined,
+    chats: unknown[] | undefined,
+    audios: unknown[] | undefined,
     columnDefault: ChatRole,
   ): ChatMessage[] => {
     const out: ChatMessage[] = [];
-    const max = Math.max(chats?.length || 0, audios?.length || 0);
-    for (let i = 0; i < max; i++) {
-      if (i < (chats?.length || 0) && typeof chats![i] === "string") {
-        try {
-          const parsed = JSON.parse(chats![i]);
-          const role = resolveRoleFromParsed(parsed, columnDefault);
-          const flags = roleFlags(role);
-          const msg: ChatMessage = {
-            type: parsed.type === "text" ? "text" : "file",
-            isLeft: isLeftForViewer("tl", role),
-            ...flags,
-            timestamp: parsed.timestamp || new Date().toISOString(),
-            seen_by: parsed.seen_by || [],
-            id: i,
-            messageId: parsed.messageId,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-            isDeleted: parsed.isDeleted || false,
-            deletedAt: parsed.deletedAt,
-            edited: parsed.edited || false,
-            editedAt: parsed.editedAt,
-            caption: parsed.caption || undefined,
-          };
-          if (!parsed.isDeleted) {
-            if (parsed.type === "text") msg.message = parsed.data;
-            else if (parsed.data) msg.file = buildChatFilePayload(parsed.data).file;
-          }
-          out.push(msg);
-        } catch (e) {
-          console.error("Error parsing chat:", e);
+
+    const pushParsed = (raw: unknown, index: number, forceFile: boolean) => {
+      const parsed = parseChatJson(raw);
+      if (!parsed || isSystemChatMessage(parsed)) return;
+
+      const role = resolveRoleFromParsed(parsed, columnDefault);
+      const flags = roleFlags(role);
+      const isDeleted = parsed.isDeleted === true;
+      const isText = !forceFile && parsed.type === "text";
+      const fileData = storedChatFileData(parsed);
+
+      const msg: ChatMessage = {
+        type: isText ? "text" : "file",
+        isLeft: isLeftForViewer("tl", role),
+        ...flags,
+        timestamp: parsed.timestamp || new Date().toISOString(),
+        seen_by: Array.isArray(parsed.seen_by) ? parsed.seen_by : [],
+        id: index,
+        messageId: parsed.messageId,
+        mention: parsed.mention || null,
+        replyTo: parsed.replyTo || null,
+        isDeleted,
+        deletedAt: parsed.deletedAt,
+        edited: parsed.edited || false,
+        editedAt: parsed.editedAt,
+        caption: parsed.caption || undefined,
+      };
+
+      if (!isDeleted) {
+        if (isText) {
+          msg.message =
+            typeof parsed.data === "string"
+              ? parsed.data
+              : parsed.message || "";
+        } else if (fileData?.url || fileData?.name) {
+          msg.file = buildChatFilePayload({
+            name: fileData.name,
+            url: fileData.url,
+            type: fileData.type,
+          }).file;
         }
       }
-      if (i < (audios?.length || 0) && typeof audios![i] === "string") {
-        try {
-          const parsed = JSON.parse(audios![i]);
-          const role = resolveRoleFromParsed(parsed, columnDefault);
-          const flags = roleFlags(role);
-          const msg: ChatMessage = {
-            type: "file",
-            isLeft: isLeftForViewer("tl", role),
-            ...flags,
-            timestamp: parsed.timestamp || new Date().toISOString(),
-            seen_by: parsed.seen_by || [],
-            id: i,
-            messageId: parsed.messageId,
-            mention: parsed.mention || null,
-            replyTo: parsed.replyTo || null,
-            isDeleted: parsed.isDeleted || false,
-            deletedAt: parsed.deletedAt,
-            caption: parsed.caption || undefined,
-          };
-          if (!parsed.isDeleted && parsed.data) {
-            msg.file = buildChatFilePayload(parsed.data).file;
-          }
-          out.push(msg);
-        } catch (e) {
-          console.error("Error parsing audio:", e);
-        }
-      }
-    }
+
+      if (!hasVisibleChatContent(msg)) return;
+      out.push(msg);
+    };
+
+    (chats || []).forEach((chat, index) => pushParsed(chat, index, false));
+    (audios || []).forEach((audio, index) => pushParsed(audio, index, true));
     return out;
   };
 
@@ -1762,7 +1719,7 @@ useEffect(() => {
     ...parseBucket(projectDetails.headchats, projectDetails.headaudios, "head"),
     ...parseBucket(projectDetails.tlchats, projectDetails.tlaudios, "tl"),
   ]);
-  setChatMessages(allMessages);
+  setChatMessages((prev) => keepLiveChatRows(allMessages, prev));
 }, [projectDetails]);
 
   const ActionBar = ({ msg, url, name }: any) => (
@@ -2103,9 +2060,9 @@ useEffect(() => {
     >
       {(() => {
         let currentDate = "";
-        let displayedMessages = chatMessages;
+        let displayedMessages = chatMessages.filter(hasVisibleChatContent);
        if (currentTab === "files") {
-  displayedMessages = chatMessages.filter(
+  displayedMessages = displayedMessages.filter(
     (msg) => msg.type === "file" && !msg.isDeleted && msg.file
   );
 }
@@ -2138,6 +2095,11 @@ useEffect(() => {
               <div
                 ref={(el) => {
                   messageRefs.current[`${index}`] = el;
+                  if (el) {
+                    if (msg.messageId) el.dataset.messageId = String(msg.messageId);
+                    if (msg.timestamp) el.dataset.timestamp = msg.timestamp;
+                    el.dataset.idx = String(index);
+                  }
                 }}
                 // highlight
                 className={`group relative flex ${
@@ -2706,8 +2668,6 @@ useEffect(() => {
   // showMonitorOption={true} // Added prop
   employeeId={leader.employeeId}
   projectId={item.project_id}
-  onMakeMonitor={handleMakeMonitor} // Added prop
-  onRemoveMonitor={handleRemoveMonitor} // NEW: Added prop for remove
   onRemoveEmployee={() => handleRemoveEmployee(leader.employeeId)}
 />
                   </div>
@@ -2731,8 +2691,6 @@ useEffect(() => {
   // showMonitorOption={true} // Added prop
   employeeId={leader.employeeId}
   projectId={item.project_id}
-  onMakeMonitor={handleMakeMonitor} // Added prop
-  onRemoveMonitor={handleRemoveMonitor} // NEW: Added prop for remove
   onRemoveEmployee={() => handleRemoveEmployee(leader.employeeId)}
 />
                 </div>

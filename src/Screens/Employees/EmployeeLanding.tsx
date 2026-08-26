@@ -12,7 +12,7 @@ import { getData, postData } from "../../BackendConnections/FetchBackendServices
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { MdDoNotTouch } from "react-icons/md";
-import { isQuietProjectStatus } from "../../utils/chatLive";
+import { countUnreadMessages, isNotifiableChatMessage, isQuietProjectStatus, seenByEmployee } from "../../utils/chatLive";
 import { readStoredRole, readStoredUserData } from "../../utils/authStorage";
 import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 
@@ -78,8 +78,7 @@ const EmployeeLanding: React.FC = () => {
   const [showFilter, setShowFilter] = useState(false);
   const [renderDrawer, setRenderDrawer] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
-    const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
-    const [newAcceptedCount, setNewAcceptedCount] = useState(0);
+    const [unseenAcceptedIds, setUnseenAcceptedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState(() => {
   return localStorage.getItem("employeeLandingActiveTab") || tabs[0];
 });
@@ -158,6 +157,57 @@ const EmployeeLanding: React.FC = () => {
   }, []);
 
   // Fetch unread TL messages for requested projects
+  const isAcceptedRequest = (status?: string | null) =>
+    status === "accepted" || status === "TLAssign";
+
+  const unseenStorageKey = (id?: number | string | null) =>
+    id != null ? `employeeUnseenAccepted:${id}` : "";
+
+  useEffect(() => {
+    const id = employeeData?.employeeId;
+    if (id == null) return;
+    try {
+      const raw = localStorage.getItem(unseenStorageKey(id));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setUnseenAcceptedIds(new Set(parsed.map(String)));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [employeeData?.employeeId]);
+
+  useEffect(() => {
+    const id = employeeData?.employeeId;
+    if (id == null) return;
+    localStorage.setItem(
+      unseenStorageKey(id),
+      JSON.stringify(Array.from(unseenAcceptedIds)),
+    );
+  }, [unseenAcceptedIds, employeeData?.employeeId]);
+
+  const markAcceptedProjectUnseen = useCallback((projectId?: string | number | null) => {
+    if (projectId == null || projectId === "") return;
+    const key = String(projectId);
+    setUnseenAcceptedIds((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  }, []);
+
+  const markAcceptedProjectSeen = useCallback((projectId?: string | number | null) => {
+    if (projectId == null || projectId === "") return;
+    const key = String(projectId);
+    setUnseenAcceptedIds((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
   const requestedProjectIds = useMemo(() => {
     return [...new Set(employeeRequests.map(req => req.project_id))];
   }, [employeeRequests]);
@@ -175,16 +225,10 @@ const EmployeeLanding: React.FC = () => {
         if (tlMonitorResponse.status && tlMonitorResponse.data) {
           const tlChatsMonitor = tlMonitorResponse.data.tlchats || [];
           const tlAudiosMonitor = tlMonitorResponse.data.tlaudios || [];
-          [...tlChatsMonitor, ...tlAudiosMonitor].forEach((chat: string) => {
-            try {
-              const parsed = JSON.parse(chat);
-              if (!parsed.seen_by || !parsed.seen_by.includes("monitor")) {
-                unreadFromTL++;
-              }
-            } catch {
-              // Ignore parsing errors
-            }
-          });
+          unreadFromTL = countUnreadMessages(
+            [...tlChatsMonitor, ...tlAudiosMonitor],
+            "employee",
+          ).count;
           tlName = tlMonitorResponse.data.teamleadername || "Team Leader";
         }
 
@@ -238,7 +282,7 @@ const EmployeeLanding: React.FC = () => {
   if (employeeRequests.length > 0) {
     fetchUnreadForRequests();
   }
-}, [employeeRequests.length]); // runs only when the list first becomes non-empty
+}, [employeeRequests, fetchUnreadForRequests]);
 
 // ========== LIVE UNREAD COUNT VIA SOCKET (NO API CALL) ==========
 useEffect(() => {
@@ -249,15 +293,8 @@ useEffect(() => {
     msg: any;
     projectId?: string;
   }) => {
-    if (data.fromRole !== "tl" || !data.projectId) return;
-
-    // Already seen by this employee → ignore
-    if (
-      data.msg?.seen_by?.includes("monitor") ||
-      data.msg?.seen_by?.includes("employee")
-    ) {
-      return;
-    }
+    if ((data.fromRole !== "tl" && data.fromRole !== "teamleader") || !data.projectId) return;
+    if (!isNotifiableChatMessage(data.msg, "employee")) return;
 
     setUnreadRequests(prev => {
       const current = prev[data.projectId!] || {
@@ -275,21 +312,8 @@ useEffect(() => {
   };
 
 const handleSeen = (data: { projectId?: string; seen_by?: string[] }) => {
-  if (!data.projectId) return;
-
-  // When messages are marked as seen by the employee, clear unread count for that project
-  setUnreadRequests((prev) => {
-    const current = prev[data.projectId!];
-    if (!current) return prev;
-
-    return {
-      ...prev,
-      [data.projectId!]: {
-        ...current,
-        unreadFromTL: 0,          // clear the count
-      },
-    };
-  });
+  if (!data.projectId || !seenByEmployee(data.seen_by)) return;
+  fetchUnreadForRequests();
 };
 
   const offNew = onEvent("newTLMonitorMessage", handleNewTlMessage);
@@ -299,7 +323,7 @@ const handleSeen = (data: { projectId?: string; seen_by?: string[] }) => {
     offNew?.();
     offSeen?.();
   };
-}, [connected, onEvent]);
+}, [connected, onEvent, fetchUnreadForRequests]);
 
   // Join shared chat rooms for all projects the employee is involved in
 useEffect(() => {
@@ -314,7 +338,8 @@ useEffect(() => {
   ];
 
   projectIds.forEach(projectId => {
-    emitEvent("joinEmployeeChat", projectId);   // ← only this, no API call
+    emitEvent("joinEmployeeChat", projectId);
+    emitEvent("joinProject", projectId);
   });
 }, [connected, employeeData?.employeeId, employeeRequests, emitEvent]);
 
@@ -419,37 +444,122 @@ useEffect(() => {
     const requestEmployeeId = newRequest.employeeid ?? newRequest.employeeId;
     if (employeeData?.employeeId && String(requestEmployeeId) === String(employeeData.employeeId)) {
       setEmployeeRequests((prev) => {
-        if (prev.some((r) => r.request_id === newRequest.request_id)) return prev;
+        if (prev.some((r) => Number(r.request_id) === Number(newRequest.request_id))) return prev;
         return [...prev, newRequest];
       });
+      if (isAcceptedRequest(newRequest.status)) {
+        markAcceptedProjectUnseen(newRequest.project_id);
+      }
     }
   };
 
   const handleEmployeeRequestsSnapshot = (payload: { data?: ProjectRequestProps[] }) => {
-    if (Array.isArray(payload?.data)) {
-      setEmployeeRequests(payload.data);
-    } else {
+    if (!Array.isArray(payload?.data)) {
       fetchEmployeeRequests();
+      return;
     }
+    const myId = employeeData?.employeeId;
+    const mine = myId
+      ? payload.data.filter(
+          (row) => String((row as any).employeeid ?? (row as any).employeeId) === String(myId),
+        )
+      : payload.data;
+    setEmployeeRequests(mine);
   };
 
-const handleRequestStatusUpdate = (data: { request_id: number; status: string }) => {
+const handleRequestStatusUpdate = (data: {
+  request_id?: number;
+  status: string;
+  project_id?: string | number;
+  projectId?: string | number;
+  employeeId?: string | number;
+  employeeid?: string | number;
+}) => {
+  const myId = employeeData?.employeeId;
+  const eventEmpId = data.employeeId ?? data.employeeid;
+  if (myId && eventEmpId != null && String(eventEmpId) !== String(myId)) return;
+
+  const projectId = data.project_id ?? data.projectId;
+  if (data.status === "removed" || data.status === "decline" || data.status === "declined") {
+    setEmployeeRequests((prev) =>
+      prev.filter((req) => {
+        if (data.request_id != null && Number(req.request_id) === Number(data.request_id)) return false;
+        if (projectId != null && String(req.project_id) === String(projectId)) return false;
+        return true;
+      })
+    );
+    markAcceptedProjectSeen(projectId);
+    return;
+  }
+
   setEmployeeRequests((prev) =>
-    prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
+    prev.map((req) => (Number(req.request_id) === Number(data.request_id) ? { ...req, status: data.status } : req))
   );
   setAllEmployeeRequests((prev) =>
-    prev.map((req) => (req.request_id === data.request_id ? { ...req, status: data.status } : req))
+    prev.map((req) => (Number(req.request_id) === Number(data.request_id) ? { ...req, status: data.status } : req))
   );
 
-  // Show notification on Accepted tab when a request is accepted
-  if (data.status === "accepted") {
-    setNewAcceptedCount((prev) => prev + 1);
-
-    setTimeout(() => {
-      fetchUnreadForRequests();
-    }, 300);
+  if (isAcceptedRequest(data.status)) {
+    markAcceptedProjectUnseen(projectId);
+    if (projectId) {
+      emitEvent("joinEmployeeChat", projectId);
+      emitEvent("joinProject", projectId);
+    }
+    fetchEmployeeRequests();
   }
 };
+
+  const handleEmployeeAssigned = (data: {
+    projectId?: string | number;
+    project_id?: string | number;
+    employeeIds?: Array<string | number>;
+    employeeId?: string | number;
+    employeeid?: string | number;
+    request_id?: number;
+    status?: string;
+  }) => {
+    const myId = employeeData?.employeeId;
+    const ids = [
+      ...(data.employeeIds || []),
+      ...(data.employeeId != null ? [data.employeeId] : []),
+      ...(data.employeeid != null ? [data.employeeid] : []),
+    ].map(String);
+    if (myId && ids.length > 0 && !ids.includes(String(myId))) return;
+
+    const projectId = data.projectId ?? data.project_id;
+    markAcceptedProjectUnseen(projectId);
+    if (projectId) {
+      emitEvent("joinEmployeeChat", projectId);
+      emitEvent("joinProject", projectId);
+    }
+    fetchEmployeeRequests();
+  };
+
+  const handleEmployeeRemoved = (data: {
+    projectId?: string | number;
+    project_id?: string | number;
+    employeeId?: string | number;
+    employeeid?: string | number;
+  }) => {
+    const myId = employeeData?.employeeId;
+    const eventEmpId = data.employeeId ?? data.employeeid;
+    if (myId && eventEmpId != null && String(eventEmpId) !== String(myId)) return;
+    const projectId = data.projectId ?? data.project_id;
+    setEmployeeRequests((prev) =>
+      prev.filter((req) => String(req.project_id) !== String(projectId))
+    );
+    markAcceptedProjectSeen(projectId);
+    fetchEmployeeRequests();
+    if (projectId) {
+      setUnreadRequests((prev) => {
+        if (!prev[String(projectId)] && !prev[projectId as string]) return prev;
+        const next = { ...prev };
+        delete next[String(projectId)];
+        delete next[projectId as string];
+        return next;
+      });
+    }
+  };
 
   const offs = [
     onEvent("newProjectCreated", handleNewProject),
@@ -459,25 +569,20 @@ const handleRequestStatusUpdate = (data: { request_id: number; status: string })
     onEvent("newEmployeeRequest", handleNewEmployeeRequest),
     onEvent("employeeRequestStatusUpdate", handleRequestStatusUpdate),
     onEvent("employeeRequestsUpdate", handleEmployeeRequestsSnapshot),
+    onEvent("employeeAssigned", handleEmployeeAssigned),
+    onEvent("employeeRemovedFromProject", handleEmployeeRemoved),
   ];
 
   return () => {
     offs.forEach((off) => off?.());
   };
-}, [connected, onEvent, employeeData?.employeeId, fetchProjectData, fetchEmployeeRequests, fetchUnreadForRequests]);
+}, [connected, onEvent, emitEvent, employeeData?.employeeId, fetchProjectData, fetchEmployeeRequests, fetchUnreadForRequests, markAcceptedProjectSeen, markAcceptedProjectUnseen]);
 
-    // 🔥 FORCE LIVE UPDATE FOR UNREAD COUNT BADGE ON ACCEPTED TAB
-// Only fetch once when the user opens Accepted or Requested tab
 useEffect(() => {
   if (activeTab === "Accepted" || activeTab === "Requested") {
     fetchUnreadForRequests();
   }
-
-  // Clear "new accepted" badge when user opens Accepted tab
-  if (activeTab === "Accepted") {
-    setNewAcceptedCount(0);
-  }
-}, [activeTab]);
+}, [activeTab, fetchUnreadForRequests]);
 
 useEffect(() => {
   const checkRole = async () => {
@@ -526,14 +631,14 @@ useEffect(() => {
   // Calculate separate unread totals for each tab
   const acceptedProjects = useMemo(() => 
     employeeRequests
-      .filter(r => r.status === "accepted")
+      .filter(r => isAcceptedRequest(r.status))
       .map(r => r.project_id),
     [employeeRequests]
   );
 
   const requestedProjects = useMemo(() => 
     employeeRequests
-      .filter(r => r.status !== "accepted")
+      .filter(r => !isAcceptedRequest(r.status))
       .map(r => r.project_id),
     [employeeRequests]
   );
@@ -549,16 +654,14 @@ const projectStatusMap = useMemo(() =>
 // Update the acceptedUnreadTotal useMemo
 // Badge on Accepted tab = newly accepted requests + unread messages
 const acceptedUnreadTotal = useMemo(() => {
-  const unreadMsgCount = acceptedProjects.reduce((sum, pid) => {
-    const status = projectStatusMap[pid];
-    if (!isQuietProjectStatus(status)) {
-      return sum + (unreadRequests[pid]?.unreadFromTL || 0);
-    }
-    return sum;
+  return acceptedProjects.reduce((sum, pid) => {
+    const key = String(pid);
+    const status = projectStatusMap[pid] || projectStatusMap[key];
+    if (isQuietProjectStatus(status)) return sum;
+    if (unseenAcceptedIds.has(key)) return sum + 1;
+    return sum + (unreadRequests[pid]?.unreadFromTL || unreadRequests[key]?.unreadFromTL || 0);
   }, 0);
-
-  return unreadMsgCount + newAcceptedCount;
-}, [acceptedProjects, unreadRequests, projectStatusMap, newAcceptedCount]);
+}, [acceptedProjects, unreadRequests, projectStatusMap, unseenAcceptedIds]);
 
 const requestedUnreadTotal = useMemo(() => 
   requestedProjects.reduce((sum, pid) => {
@@ -597,10 +700,10 @@ const activeUnreadTotal = 0;
       );
     }
     if (activeTab === "Requested") {
-      return withProjectDates(employeeRequests.filter((item) => item.status !== "accepted"));
+      return withProjectDates(employeeRequests.filter((item) => !isAcceptedRequest(item.status)));
     }
     if (activeTab === "Accepted") {
-      return withProjectDates(employeeRequests.filter((item) => item.status === "accepted"));
+      return withProjectDates(employeeRequests.filter((item) => isAcceptedRequest(item.status)));
     }
     if (activeTab === "Completed") {
       return withProjectDates(projectDetails.filter((project) => project.status === "Completed"));
@@ -818,25 +921,7 @@ const activeUnreadTotal = 0;
                         index === currentItems.length - 1 ? "mt-7" : "my-7"
                       } w-full min-w-[700px] flex-col`}
 onClick={() => {
-  // Clear unread count for this project when opening it
-  setUnreadRequests((prev) => {
-    const current = prev[item.project_id];
-    if (!current) return prev;
-    return {
-      ...prev,
-      [item.project_id]: {
-        ...current,
-        unreadFromTL: 0,
-      },
-    };
-  });
-
-  // Clear the "new accepted" notification
-  setNewAcceptedCount(0);
-
-  // Also dismiss the green dot
-  setDismissedNotifications((prev) => new Set([...prev, String(item.project_id)]));
-
+  markAcceptedProjectSeen(item.project_id);
   navigate(`/employeeprojectinfo`, { state: { item } });
 }}
                     >
@@ -856,17 +941,15 @@ onClick={() => {
     </div>
 
     {/* GREEN DOT ONLY — never for Hold / Completed */}
-    {unreadInfoForProject.unreadFromTL > 0 &&
-      !isQuietProjectStatus(projectStatusMap[projectItem.project_id] || (projectItem as any).status) &&
-      !dismissedNotifications.has(String(projectItem.project_id)) && (
+    {(unreadInfoForProject.unreadFromTL > 0 || unseenAcceptedIds.has(String(projectItem.project_id))) &&
+      !isQuietProjectStatus(projectStatusMap[projectItem.project_id] || (projectItem as any).status) && (
         <span
           className="relative flex h-3 w-3 cursor-pointer ml-2"
           title="New message from Team Leader"
           onClick={(e) => {
             e.stopPropagation();
-            setDismissedNotifications(
-              (prev) => new Set([...prev, String(projectItem.project_id)])
-            );
+            markAcceptedProjectSeen(projectItem.project_id);
+            navigate(`/employeeprojectinfo`, { state: { item } });
           }}
         >
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />

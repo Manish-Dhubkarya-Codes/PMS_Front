@@ -7,6 +7,7 @@ import Button2 from "../../UI_Components/Buttons/Button2";
 import EmployeeSearchBar from "../../UI_Components/SearchBars/EmployeeSearch";
 import { postData, getData, serverURL } from "../../BackendConnections/FetchBackendServices";
 import { Commet } from "react-loading-indicators";
+import { useSocket } from "../../BackendConnections/useSocket";
 
 interface Employee {
   name: string;
@@ -56,6 +57,7 @@ const TeamLeaderProjectAss: React.FC = () => {
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
   const [errorRequests, setErrorRequests] = useState<string | null>(null);
   const [isRefreshingEmployees, setIsRefreshingEmployees] = useState(false);
+  const { emitEvent } = useSocket();
 
   const projectInfo: GroupedRequestProps = selectedRequest || {
     workstream: "N/A",
@@ -177,6 +179,15 @@ useEffect(() => {
           ...prev,
           [employeeId]: 'accepted',
         }));
+        emitEvent("employeeAssigned", {
+          projectId,
+          employeeIds: [employeeId],
+          employeeId,
+        });
+        emitEvent("employeeRequestStatusUpdate", {
+          request_id: requestId,
+          status: "accepted",
+        });
       } else {
         console.error("Assign failed:", response.message);
       }
@@ -256,6 +267,17 @@ useEffect(() => {
           }));
           // Remove assigned employee from allEmployees to update the Self Assign list
           setAllEmployees(prev => prev.filter(emp => emp.employeeId !== employeeId));
+          emitEvent("employeeAssigned", {
+            projectId: projectInfo.project_id,
+            employeeIds: [employeeId],
+            employeeId,
+          });
+          if (response.data?.request_id) {
+            emitEvent("employeeRequestStatusUpdate", {
+              request_id: response.data.request_id,
+              status: "TLAssign",
+            });
+          }
         }
       }
       setSelectedEmployeeIds([]); // Clear selections after submission

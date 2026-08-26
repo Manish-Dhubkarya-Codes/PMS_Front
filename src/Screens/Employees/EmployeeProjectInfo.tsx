@@ -9,7 +9,7 @@ import { FaInfoCircle, FaFileAudio, FaFileImage, FaFileInvoice, FaFileVideo, FaR
 import { FiDownload, FiX, FiZoomIn } from "react-icons/fi";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
 import DOMPurify from "dompurify";
-import { matchesChatMessage, playChatNotificationSound, sameChatTimestamp, unlockChatNotificationSound } from "../../utils/chatLive";
+import { matchesChatMessage, playChatNotificationSound, safeSocketEmit, seenByEmployee, unlockChatNotificationSound } from "../../utils/chatLive";
 import UserIcon from "../../assets/CredientialAssets/UserLogo.png";
 import { Commet } from "react-loading-indicators";
 import { v4 as uuidv4 } from 'uuid';
@@ -23,6 +23,7 @@ import {
   appendLocalMonitorFileMessage,
   formatMonitorSenderLabel,
   mergeMonitorChatMessage,
+  mergeMonitorSnapshot,
 } from "../../FileSendUI/monitorChatMerge";
 import { buildChatFilePayload, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
@@ -360,26 +361,43 @@ useEffect(() => {
   setShowChat(isChatEligible && !isCompleted);
 }, [isChatEligible, isCompleted]);
 
-
-  // Socket connection and event listeners
 useEffect(() => {
-  if (socket && connected && showChat && item?.project_id) {
-    const projectId = item.project_id;
-    socket.emit("joinEmployeeChat", projectId);
-    socket.emit("requestTLMonitorChats", projectId);
-    socket.emit("joinEmployeeRoom", employeeData.employeeId);   // ← ADD THIS LINE
+  const projectId = item?.project_id;
+  if (!projectId) return;
+  const loadChats = async () => {
+    try {
+      const response = await getData(`clientproject/get_tl_monitor_chats/${projectId}`);
+      if (response.status) {
+        setTlMonitorChats(response.data);
+      }
+    } catch (err) {
+      console.error("Error fetching TL-Monitor chats:", err);
+    }
+  };
+  loadChats();
+}, [item?.project_id]);
+
+  // Socket connection and event listeners — attach even before showChat so live messages are not missed
+useEffect(() => {
+  if (!socket || !item?.project_id) return;
+  const projectId = item.project_id;
+  safeSocketEmit(socket, "joinEmployeeChat", projectId);
+  safeSocketEmit(socket, "joinProject", projectId);
+  safeSocketEmit(socket, "requestTLMonitorChats", projectId);
+  if (employeeData?.employeeId) {
+    safeSocketEmit(socket, "joinEmployeeRoom", employeeData.employeeId);
+  }
 
     const handleChats = (data: any) => {
-      console.log("🔥 1. RAW DATA FROM BACKEND:", data);
-      console.log("🔥 2. FIRST MONITOR CHAT SENDER NAME:", data?.monitorchats?.[0]?.senderName);
+      if (data?.projectId && String(data.projectId) !== String(projectId)) return;
       setTlMonitorChats(data);
     };
 
     const applyMonitorMsg = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
       if (
         data.projectId &&
-        item?.project_id &&
-        String(data.projectId) !== String(item.project_id)
+        projectId &&
+        String(data.projectId) !== String(projectId)
       ) {
         return;
       }
@@ -393,9 +411,8 @@ useEffect(() => {
 
     const handleNewMessage = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
       applyMonitorMsg(data);
-      const fromRole = data?.fromRole;
-      // Don't ping for own messages
-      if (fromRole && fromRole !== "employee") playNotification();
+      const fromMe = String(data?.msg?.senderId || "") === String(employeeData?.employeeId || "");
+      if (!fromMe) playNotification();
     };
 
     const handleMessageAck = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
@@ -413,7 +430,7 @@ useEffect(() => {
     };
 
 const handleEdited = (data: any) => {
-  if (String(data.projectId) !== String(item?.project_id)) return;
+  if (String(data.projectId) !== String(projectId)) return;
 
   const updateFn = (m: ChatMessage) => {
     if (!matchesChatMessage(m, data)) return m;
@@ -429,7 +446,7 @@ const handleEdited = (data: any) => {
 };
 
 const handleDeleted = (data: any) => {
-  if (String(data.projectId) !== String(item?.project_id)) return;
+  if (String(data.projectId) !== String(projectId)) return;
 
   const updateFn = (m: ChatMessage) => {
     if (!matchesChatMessage(m, data)) return m;
@@ -445,10 +462,9 @@ const handleDeleted = (data: any) => {
   setChatMessages((prev) => prev.map(updateFn));
 };
 
-// ==================== NEW: Employee Removed ====================
 const handleEmployeeRemoved = (data: { projectId: number | string; employeeId: number | string }) => {
   if (
-    String(data.projectId) === String(item?.project_id) &&
+    String(data.projectId) === String(projectId) &&
     String(data.employeeId) === String(employeeData.employeeId)
   ) {
     setIsChatEligible(false);
@@ -457,14 +473,23 @@ const handleEmployeeRemoved = (data: { projectId: number | string; employeeId: n
   }
 };
 
-// ==================== NEW: Project Hold / Active ====================
 const handleProjectStatusUpdated = (data: { projectId: string | number; status: string }) => {
-  if (String(data.projectId) !== String(item?.project_id)) return;
+  if (String(data.projectId) !== String(projectId)) return;
   setProjectDetails((prev) => (prev ? { ...prev, status: data.status } : prev));
 };
-// ==============================================================
+
+const handleAssigned = (data: { projectId?: string | number; employeeIds?: Array<string | number>; employeeId?: string | number }) => {
+  const ids = [
+    ...(data.employeeIds || []),
+    ...(data.employeeId != null ? [data.employeeId] : []),
+  ].map(String);
+  if (String(data.projectId) !== String(projectId)) return;
+  if (ids.length && employeeData?.employeeId && !ids.includes(String(employeeData.employeeId))) return;
+  setIsChatEligible(true);
+};
 
 socket.on("tlMonitorChats", handleChats);
+socket.on("tlMonitorChatsUpdate", (payload: any) => handleChats(payload?.data || payload));
 socket.on("newTLMonitorMessage", handleNewMessage);
 socket.on("messageAck", handleMessageAck);
 socket.on("tlMonitorMessageSeen", handleMessageSeen);
@@ -472,9 +497,11 @@ socket.on("tlMonitorMessageEdited", handleEdited);
 socket.on("tlMonitorMessageDeleted", handleDeleted);
 socket.on("employeeRemovedFromProject", handleEmployeeRemoved);
 socket.on("projectStatusUpdated", handleProjectStatusUpdated);
+socket.on("employeeAssigned", handleAssigned);
 
     return () => {
   socket.off("tlMonitorChats", handleChats);
+  socket.off("tlMonitorChatsUpdate");
   socket.off("newTLMonitorMessage", handleNewMessage);
   socket.off("messageAck", handleMessageAck);
   socket.off("tlMonitorMessageSeen", handleMessageSeen);
@@ -482,9 +509,9 @@ socket.on("projectStatusUpdated", handleProjectStatusUpdated);
   socket.off("tlMonitorMessageDeleted", handleDeleted);
   socket.off("employeeRemovedFromProject", handleEmployeeRemoved);
   socket.off("projectStatusUpdated", handleProjectStatusUpdated);
+  socket.off("employeeAssigned", handleAssigned);
 };
-  }
-}, [socket, connected, showChat, item, playNotification, employeeData?.employeeId]);
+}, [socket, connected, item?.project_id, playNotification, employeeData?.employeeId]);
 
 useEffect(() => {
   if (!tlMonitorChats) return;
@@ -555,35 +582,7 @@ useEffect(() => {
 
   allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-  setChatMessages((prev) => {
-    const localOnly = prev.filter((local) => {
-      if (!local.tempId && !local.file) return false;
-      return !allMessages.some((serverMsg) => {
-        if (local.tempId && serverMsg.tempId && local.tempId === serverMsg.tempId) return true;
-        if (local.messageId && serverMsg.messageId && local.messageId === serverMsg.messageId) return true;
-        if (
-          local.file?.url &&
-          serverMsg.file?.url &&
-          local.file.url === serverMsg.file.url
-        ) {
-          return true;
-        }
-        if (
-          local.type === "file" &&
-          serverMsg.type === "file" &&
-          local.file?.name &&
-          local.file.name === serverMsg.file?.name &&
-          sameChatTimestamp(local.timestamp, serverMsg.timestamp)
-        ) {
-          return true;
-        }
-        return false;
-      });
-    });
-    return [...allMessages, ...localOnly].sort((a, b) =>
-      String(a.timestamp).localeCompare(String(b.timestamp)),
-    );
-  });
+  setChatMessages((prev) => mergeMonitorSnapshot(allMessages, prev));
 }, [tlMonitorChats, employeeData.employeeId, employeeData.employeeName]);
 
 
@@ -682,8 +681,7 @@ useEffect(() => {
             const idx = target.dataset.idx;
             if (idx) {
               const msg = combinedMessages[parseInt(idx)]; // Use combined
-              const viewer = "monitor";
-              if (msg && msg.isLeft && !msg.fromClient && !msg.seen_by.includes(viewer) && msg.id !== undefined) { // Skip if fromClient
+              if (msg && msg.isLeft && !msg.fromClient && !seenByEmployee(msg.seen_by) && msg.id !== undefined) { // Skip if fromClient
                 if (!requiresPreview(msg)) {
                   markMessageAsSeen(msg);
                 }
@@ -794,7 +792,7 @@ useEffect(() => {
     if (!projectDetails?.project_id || msg.id === undefined || !socket) return;
     const messageType = msg.type === "file" && isChatAudioFile(msg.file?.type, msg.file?.name) ? "audio" : "chat";
     const fromTL = msg.fromTL;
-    const viewer = "monitor";
+    const viewer = "employee";
     socket.emit("markTLMonitorSeen", {
       projectId: projectDetails.project_id,
       index: msg.id,
@@ -835,13 +833,13 @@ useEffect(() => {
     if (msg.seen_by.length === 0) return "Not seen yet";
     let text = "";
     const tlName = tlMonitorChats?.teamleadername;
-    const monitorName = tlMonitorChats?.monitorname || employeeData.employeeName;
+    const employeeName = employeeData.employeeName || "Employee";
     if (msg.seen_by.includes("tl")) {
       text += `Team Leader (${tlName})`;
     }
-    if (msg.seen_by.includes("monitor")) {
+    if (seenByEmployee(msg.seen_by)) {
       if (text) text += ", ";
-      text += `Monitor (${monitorName})`;
+      text += `Employee (${employeeName})`;
     }
     return `Seen by ${text}`;
   };
@@ -1877,7 +1875,7 @@ const getSenderInfo = (msg: ChatMessage) =>
               </div>
             ) : (
               <div className="w-full text-[14px] text-center py-8 text-gray-500">
-                Chat not available for this role/assignment.
+                Chat is available after you are assigned to this project.
               </div>
             )}
           </div>

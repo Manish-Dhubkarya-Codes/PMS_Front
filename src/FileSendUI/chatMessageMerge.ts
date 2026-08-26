@@ -1,5 +1,13 @@
 import { buildChatFilePayload } from "./chatFileUtils";
-import { fileUrlKey, isLeftForViewer, type ChatRole } from "./chatIdentity";
+import {
+  fileUrlKey,
+  hasVisibleChatContent,
+  isLeftForViewer,
+  isSystemChatMessage,
+  pickPersonName,
+  type ChatRole,
+} from "./chatIdentity";
+import { mergeSeenBy } from "../utils/chatLive";
 
 function sameFile(aUrl?: string, bUrl?: string): boolean {
   const ka = fileUrlKey(aUrl);
@@ -19,6 +27,7 @@ export function mergeIncomingChatMessage<T extends Record<string, any>>(
 ): T[] {
   const incoming = data?.msg;
   if (!incoming) return prev;
+  if (isSystemChatMessage(incoming)) return prev;
 
   const fromRole = ((): ChatRole => {
     const r =
@@ -161,19 +170,22 @@ export function mergeIncomingChatMessage<T extends Record<string, any>>(
     editedAt: incoming.editedAt,
     isDeleted: !!incoming.isDeleted,
     deletedAt: incoming.deletedAt,
+    senderName: pickPersonName(incoming),
     // Keep tempId only if still provisional (shouldn't for server msgs)
     tempId: undefined,
   };
 
   if (!isFile) {
     newMsg.message = incomingText;
-  } else {
+  } else if (incomingFileUrl || incomingFileName) {
     newMsg.file = buildChatFilePayload({
       name: incomingFileName,
       url: incomingFileUrl,
       type: incoming.data?.type || incoming.file?.type,
     }).file;
   }
+
+  if (!hasVisibleChatContent(newMsg)) return prev;
 
   return [...prev, newMsg as T].sort((a, b) =>
     String(a.timestamp).localeCompare(String(b.timestamp)),
@@ -217,13 +229,14 @@ function upgradeAt<T extends Record<string, any>>(
     id: incoming.id ?? existing.id,
     messageId: meta.incomingMessageId || existing.messageId,
     timestamp: incoming.timestamp || existing.timestamp,
-    seen_by: incoming.seen_by || existing.seen_by || [],
+    seen_by: mergeSeenBy(existing.seen_by, incoming.seen_by),
     caption: existing.caption || incoming.caption || undefined,
     replyTo: existing.replyTo || incoming.replyTo || null,
     edited: incoming.edited ?? existing.edited,
     editedAt: incoming.editedAt || existing.editedAt,
     isDeleted: incoming.isDeleted ?? existing.isDeleted,
     deletedAt: incoming.deletedAt || existing.deletedAt,
+    senderName: pickPersonName(incoming, existing) || existing.senderName,
     tempId: undefined,
     ...(upgradedFile ? { file: upgradedFile } : {}),
     ...(meta.incomingText !== undefined && !meta.isFile

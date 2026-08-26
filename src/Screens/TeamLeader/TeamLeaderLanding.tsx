@@ -17,7 +17,7 @@ import { RiLoader2Fill } from "react-icons/ri";
 import { MdFolderOff } from "react-icons/md";
 import ProgressTracking from "../../UI_Components/Progresses/ProgressTracking";
 import Button2 from "../../UI_Components/Buttons/Button2";
-import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { countUnreadMessages, isNotifiableChatMessage, isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
 import { readStoredUserData } from "../../utils/authStorage";
 import ActiveSinceLabel from "../../UI_Components/ActiveSinceLabel";
 
@@ -266,38 +266,18 @@ useEffect(() => {
           const headName = response.data.headName || "Head";
           const clientName = response.data.clientName || "Client";
 
-          let unreadFromHead = 0;
-          let unreadFromClient = 0;
-          let hasMentionFromHead = false;
-          let hasMentionFromClient = false;
-
-          [...headChats, ...headAudios].forEach((chat: string) => {
-            try {
-              const parsed = JSON.parse(chat);
-              if (!parsed.seen_by || !parsed.seen_by.includes("tl")) {
-                unreadFromHead++;
-                if (parsed.mention && parsed.mention.type === "tl") {
-                  hasMentionFromHead = true;
-                }
-              }
-            } catch {
-              // Ignore parsing errors
-            }
-          });
-
-          [...clientChats, ...clientAudios].forEach((chat: string) => {
-            try {
-              const parsed = JSON.parse(chat);
-              if (!parsed.seen_by || !parsed.seen_by.includes("tl")) {
-                unreadFromClient++;
-                if (parsed.mention && parsed.mention.type === "tl") {
-                  hasMentionFromClient = true;
-                }
-              }
-            } catch {
-              // Ignore parsing errors
-            }
-          });
+          const headUnread = countUnreadMessages(
+            [...headChats, ...headAudios],
+            "tl",
+          );
+          const clientUnread = countUnreadMessages(
+            [...clientChats, ...clientAudios],
+            "tl",
+          );
+          const unreadFromHead = headUnread.count;
+          const unreadFromClient = clientUnread.count;
+          const hasMentionFromHead = headUnread.hasMention;
+          const hasMentionFromClient = clientUnread.hasMention;
 
           const tlMonitorResponse = await getData(`clientproject/get_tl_monitor_chats/${project.project_id}`);
           let unreadFromMonitor = 0;
@@ -305,16 +285,10 @@ useEffect(() => {
           if (tlMonitorResponse.status && tlMonitorResponse.data) {
             const monitorChats = tlMonitorResponse.data.monitorchats || [];
             const monitorAudios = tlMonitorResponse.data.monitoraudios || [];
-            [...monitorChats, ...monitorAudios].forEach((chat: string) => {
-              try {
-                const parsed = JSON.parse(chat);
-                if (!parsed.seen_by || !parsed.seen_by.includes("tl")) {
-                  unreadFromMonitor++;
-                }
-              } catch {
-                // Ignore parsing errors
-              }
-            });
+            unreadFromMonitor = countUnreadMessages(
+              [...monitorChats, ...monitorAudios],
+              "tl",
+            ).count;
             monitorName = tlMonitorResponse.data.monitorname || "Employee";
           }
 
@@ -337,16 +311,10 @@ useEffect(() => {
         if (tlMonitorResponse.status && tlMonitorResponse.data) {
           const monitorChats = tlMonitorResponse.data.monitorchats || [];
           const monitorAudios = tlMonitorResponse.data.monitoraudios || [];
-          [...monitorChats, ...monitorAudios].forEach((chat: string) => {
-            try {
-              const parsed = JSON.parse(chat);
-              if (!parsed.seen_by || !parsed.seen_by.includes("tl")) {
-                unreadFromMonitor++;
-              }
-            } catch {
-              // Ignore parsing errors
-            }
-          });
+          unreadFromMonitor = countUnreadMessages(
+            [...monitorChats, ...monitorAudios],
+            "tl",
+          ).count;
           monitorName = tlMonitorResponse.data.monitorname || "Employee";
         }
 
@@ -674,8 +642,8 @@ useEffect(() => {
     if (department !== "Technical") return;
 
     const handleNewMessage = (data: { fromRole: 'head' | 'client' | 'tl'; msg: any; projectId?: string }) => {
-      console.log('Received newMessage:', data);  // Debug log
-      if (!data.projectId || data.fromRole === 'tl') return;  // Ignore own messages
+      if (!data.projectId || data.fromRole === 'tl') return;
+      if (!isNotifiableChatMessage(data.msg, "tl")) return;
 
       setUnreadInfo((prev) => {
         const projectId = data.projectId!;
@@ -684,20 +652,16 @@ useEffect(() => {
         let isNewUnread = false;
 
         if (data.fromRole === 'head') {
-          if (!data.msg.seen_by?.includes('tl')) {
-            updatedProject.unreadFromHead++;
-            isNewUnread = true;
-            if (data.msg.mention?.type === 'tl') {
-              updatedProject.hasMentionFromHead = true;
-            }
+          updatedProject.unreadFromHead++;
+          isNewUnread = true;
+          if (data.msg.mention?.type === 'tl') {
+            updatedProject.hasMentionFromHead = true;
           }
         } else if (data.fromRole === 'client') {
-          if (!data.msg.seen_by?.includes('tl')) {
-            updatedProject.unreadFromClient++;
-            isNewUnread = true;
-            if (data.msg.mention?.type === 'tl') {
-              updatedProject.hasMentionFromClient = true;
-            }
+          updatedProject.unreadFromClient++;
+          isNewUnread = true;
+          if (data.msg.mention?.type === 'tl') {
+            updatedProject.hasMentionFromClient = true;
           }
         }
 
@@ -718,9 +682,9 @@ useEffect(() => {
   useEffect(() => {
     if (department !== "Technical") return;
 
-    const handleNewTlMonitorMessage = (data: { fromRole: 'tl' | 'monitor'; msg: any; projectId?: string }) => {
-      console.log('Received newTlMonitorMessage:', data);  // Debug log
-      if (!data.projectId || data.fromRole === 'tl') return;  // Ignore own messages (process only 'monitor')
+    const handleNewTlMonitorMessage = (data: { fromRole: string; msg: any; projectId?: string }) => {
+      if (!data.projectId || data.fromRole === 'tl') return;
+      if (!isNotifiableChatMessage(data.msg, "tl")) return;
 
       setUnreadInfo((prev) => {
         const projectId = data.projectId!;
@@ -728,10 +692,8 @@ useEffect(() => {
         let updatedProject = { ...current };
         let isNewUnread = false;
 
-        if (!data.msg.seen_by || !data.msg.seen_by.includes("tl")) {
-          updatedProject.unreadFromMonitor++;
-          isNewUnread = true;
-        }
+        updatedProject.unreadFromMonitor++;
+        isNewUnread = true;
 
         if (isNewUnread) {
           queueMicrotask(() => playChatNotificationSound());
@@ -1266,6 +1228,7 @@ const filteredItems =
   const isXL = width > 1280 && width <= 1536;
   const is2XL = width > 1536;
   const isMobileLayout = isXXS || isXS || isSM || isMD;
+  const isTechnicalDesktop = department === "Technical" && !isMobileLayout;
   const textSize = is2XL ? "text-[15px]" : "text-[12px]";
 
   const updateTableStart = useCallback(() => {
@@ -1273,13 +1236,17 @@ const filteredItems =
     const nav = navStartRef.current;
     if (!container || !nav) return;
     const firstTab = nav.querySelector<HTMLElement>("[data-nav-start]");
-    const startEl = firstTab ?? nav;
+    if (!firstTab) return;
+    const strip = firstTab.parentElement ?? nav;
     const offset =
-      startEl.getBoundingClientRect().left - container.getBoundingClientRect().left;
+      strip.getBoundingClientRect().left -
+      container.getBoundingClientRect().left +
+      firstTab.offsetLeft;
     setTableStart(Math.max(0, Math.round(offset)));
   }, []);
 
   useEffect(() => {
+    if (isTechnicalDesktop) return;
     const frame = requestAnimationFrame(updateTableStart);
     const container = alignContainerRef.current;
     const nav = navStartRef.current;
@@ -1295,7 +1262,7 @@ const filteredItems =
       ro.disconnect();
       window.removeEventListener("resize", updateTableStart);
     };
-  }, [updateTableStart, loading, activeTab, width, tabs.length]);
+  }, [updateTableStart, loading, width, tabs.length, isTechnicalDesktop]);
 
   const handleRequestTab = (item: GroupedRequestProps) => {
     navigate("/teamleaderprojectass", {
@@ -1461,7 +1428,7 @@ const filteredItems =
             : "w-full items-center justify-center"
           }`}
       >
-        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : isTechnicalDesktop ? "w-full min-w-0" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
           <div className="w-full flex justify-center items-center">
             <div className="w-fit flex items-center space-x-10">
               {isMobileLayout && (
@@ -1474,11 +1441,21 @@ const filteredItems =
           </div>
           <div
             ref={alignContainerRef}
-            className={isMobileLayout ? "flex w-full flex-col items-center" : "w-full flex flex-col overflow-visible"}
+            className={
+              isMobileLayout
+                ? "flex w-full flex-col items-center"
+                : isTechnicalDesktop
+                  ? "grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-8 gap-y-6 items-start"
+                  : "w-full flex flex-col overflow-visible"
+            }
           >
             <div
               ref={navStartRef}
-              className="w-full flex justify-center overflow-visible relative z-10"
+              className={
+                isTechnicalDesktop
+                  ? "col-start-2 row-start-1 min-w-0 w-full relative z-10"
+                  : "w-full flex justify-center overflow-visible relative z-10"
+              }
             >
               <Navigation1
                 tabs={tabs}
@@ -1492,10 +1469,17 @@ const filteredItems =
                 totalUnreadAssigned={totalUnreadAssigned}
                 totalUnreadRequests={totalUnreadRequests}
                 totalPendingVerify={totalPendingVerify}
-                centered
+                centered={!isTechnicalDesktop}
+                scrollable={department === "Technical"}
               />
             </div>
-            <div className="relative flex w-full items-start mt-7">
+            <div
+              className={
+                isTechnicalDesktop
+                  ? "contents"
+                  : "relative flex w-full items-start mt-6"
+              }
+            >
               {isMobileLayout ? (
                 renderDrawer && (
                   <div
@@ -1513,7 +1497,7 @@ const filteredItems =
                   </div>
                 )
               ) : (
-                <div className="absolute left-0 top-0 [&>div]:mx-0">
+                <div className={isTechnicalDesktop ? "col-start-1 row-start-2 shrink-0 [&>div]:mx-0" : "absolute left-0 top-0 [&>div]:mx-0"}>
                   <Filter
                     filters={activeTab === "Verify Employee" ? statusFilterOptions : filters}
                     setSelectedFilters={activeTab === "Verify Employee" ? setStatusFilters : setSelectedFilters}
@@ -1522,10 +1506,16 @@ const filteredItems =
                 </div>
               )}
               <div
-                className={isMobileLayout ? "flex w-full flex-col" : "w-full min-w-0"}
-                style={isMobileLayout ? undefined : { paddingLeft: tableStart }}
+                className={
+                  isMobileLayout
+                    ? "flex w-full flex-col"
+                    : isTechnicalDesktop
+                      ? "col-start-2 row-start-2 min-w-0 pl-8"
+                      : "w-full min-w-0 flex-1"
+                }
+                style={isMobileLayout || isTechnicalDesktop ? undefined : { paddingLeft: tableStart }}
               >
-          <div className={activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"}>
+          <div className={`${isTechnicalDesktop || activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"} space-y-5`}>
             {department === "Technical" ? (
               activeTab === "Requests" ? (
                 filteredItems.length > 0 ? (
@@ -1538,8 +1528,7 @@ const filteredItems =
                         <div
                           onClick={() => handleRequestTab(item)}
                           key={index}
-                          className={`flex cursor-pointer justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
-                            } w-full min-w-[700px] flex-col`}
+                          className={`flex cursor-pointer justify-start items-start w-full ${isTechnicalDesktop ? "min-w-0" : "min-w-[700px]"} flex-col`}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
                             <div className="flex gap-2 items-center justify-start w-full">
@@ -1656,17 +1645,10 @@ const filteredItems =
                   currentItems.map((item, index) => {
                     const projectItem = item as ProjectListProps;
                     const unreadInfoForProject = unreadInfo[projectItem.project_id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0, hasMentionFromHead: false, hasMentionFromClient: false, headName: "Head", clientName: "Client", monitorName: "Employee" };
-                    const hasAnyUnreadOrMention =
-                      unreadInfoForProject.unreadFromHead > 0 ||
-                      unreadInfoForProject.unreadFromClient > 0 ||
-                      unreadInfoForProject.unreadFromMonitor > 0 ||
-                      unreadInfoForProject.hasMentionFromHead ||
-                      unreadInfoForProject.hasMentionFromClient;
                     return (
                       <div
                         key={index}
-                        className={`flex relative ${hasAnyUnreadOrMention ? "pb-10" : ""} justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
-                          } w-full min-w-0 flex-col`}
+                        className={`flex relative justify-start items-start w-full min-w-0 flex-col`}
                       >
                         <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
                           <div className="flex items-start justify-between w-full min-w-0 gap-2">
@@ -1784,23 +1766,14 @@ const filteredItems =
           monitorName: "Employee",
         };
 
-        const hasAnyUnreadOrMention =
-          unreadInfoForProject.unreadFromHead > 0 ||
-          unreadInfoForProject.unreadFromClient > 0 ||
-          unreadInfoForProject.unreadFromMonitor > 0 ||
-          unreadInfoForProject.hasMentionFromHead ||
-          unreadInfoForProject.hasMentionFromClient;
-
         return (
           <div
             key={index}
-            className={`flex relative ${hasAnyUnreadOrMention ? "pb-20" : ""} justify-start items-start ${
-              index === currentItems.length - 1 ? "mt-7" : "my-0"
-            } w-full min-w-[700px] flex-col`}
+            className={`flex relative justify-start items-start w-full ${isTechnicalDesktop ? "min-w-0" : "min-w-[700px]"} flex-col`}
           >
-            <div className="flex flex-col-reverse items-start justify-start w-full">
-              <div className="flex items-start justify-between w-full">
-                <div className="flex gap-2 items-center justify-start w-full">
+            <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
+              <div className="flex items-start justify-between w-full min-w-0 gap-2">
+                <div className="flex gap-2 items-center justify-start min-w-0 flex-1">
                 <Button1
                   gradientType="gradient1"
                   width={widthClass}
@@ -1814,7 +1787,7 @@ const filteredItems =
 </div>
 </div>
 
-               <div className="flex items-center space-x-3">
+               <div className="flex items-center space-x-3 shrink-0">
   {/* Talk to Client/Head */}
   <div className="flex items-center">
     <div
@@ -1942,21 +1915,14 @@ const filteredItems =
                       const firstEmployee = employeeNames[0] || "N/A";
                       const extraCount = employeeNames.length - 1;
                       const unreadInfoForProject = unreadInfo[projectItem.project_id] || { unreadFromHead: 0, unreadFromClient: 0, unreadFromMonitor: 0, hasMentionFromHead: false, hasMentionFromClient: false, headName: "Head", clientName: "Client", monitorName: "Employee" };
-                      const hasAnyUnreadOrMention =
-                        unreadInfoForProject.unreadFromHead ||
-                        unreadInfoForProject.unreadFromClient ||
-                        unreadInfoForProject.unreadFromMonitor ||
-                        unreadInfoForProject.hasMentionFromHead ||
-                        unreadInfoForProject.hasMentionFromClient
                       return (
                         <div
                           key={index}
-                          className={`flex relative ${!hasAnyUnreadOrMention ? "" : "pb-22"}  justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
-                            } w-full min-w-[700px] flex-col`}
+                          className={`flex relative justify-start items-start w-full ${isTechnicalDesktop ? "min-w-0" : "min-w-[700px]"} flex-col`}
                         >
-                          <div className="flex flex-col-reverse items-start justify-start w-full">
-                            <div className="flex items-start justify-between w-full">
-                              <div className="flex gap-2 items-center justify-start w-full">
+                          <div className="flex flex-col-reverse items-start justify-start w-full min-w-0">
+                            <div className="flex items-start justify-between w-full min-w-0 gap-2">
+                              <div className="flex gap-2 items-center justify-start min-w-0 flex-1">
                               <Button1
                                 gradientType="gradient1"
                                 width={widthClass}
@@ -1969,7 +1935,7 @@ const filteredItems =
   </span>
 </div>
 </div>
-<div className="flex items-center space-x-3">
+<div className="flex items-center space-x-3 shrink-0">
   {/* Talk to Client/Head */}
   <div className="flex items-center">
     <div
@@ -2092,13 +2058,12 @@ const filteredItems =
                 )
               ) : activeTab === "Verify Employee" ? (
                 filteredItems.length > 0 ? (
-                  currentItems.map((item, index) => {
+                  currentItems.map((item) => {
                     const employeeItem = item as EmployeeRegRequest;
                     return (
                       <div
                         key={employeeItem.id}
-                        className={`flex justify-start items-start ${index === currentItems.length - 1 ? "my-7" : "my-7"
-                          } w-full min-w-[850px] flex-col`}
+                        className={`flex justify-start items-start w-full ${isTechnicalDesktop ? "min-w-0" : "min-w-[850px]"} flex-col`}
                       >
                         <div className="flex flex-col-reverse items-start justify-start w-full">
                           <div>
@@ -2111,18 +2076,18 @@ const filteredItems =
                           </div>
                           <div className="border-t-2 border-[#000000] w-full"></div>
                         </div>
-                        <div className="flex mt-2 w-full pl-[2vw] justify-between items-center">
+                        <div className="flex mt-2 w-full pl-[2vw] justify-between items-center min-w-0 gap-2">
                           <div
-                            className={`text-[#000000] w-[33.33%] text-start flex font-normal ${textSize} -tracking-[0.02rem]`}
+                            className={`text-[#000000] w-[33.33%] min-w-0 break-words text-start flex font-normal ${textSize} -tracking-[0.02rem]`}
                           >
                             Employee ID: {employeeItem.employmentID}
                           </div>
                           <div
-                            className={`text-[#000000] font-normal flex justify-start w-[33.33%] ${textSize} -tracking-[0.02rem]`}
+                            className={`text-[#000000] font-normal flex justify-start w-[33.33%] min-w-0 break-words ${textSize} -tracking-[0.02rem]`}
                           >
                             Email: {employeeItem.employeeMail}
                           </div>
-                          <div className={`w-[33.33%] flex justify-center items-center`}>
+                          <div className={`w-[33.33%] shrink-0 flex justify-center items-center`}>
                             <div className="flex items-center justify-center gap-2">
                               {employeeItem.status !== "pending" && (
                                 <div
@@ -2192,12 +2157,11 @@ const filteredItems =
                       return (
                         <div
                           key={index}
-                          className={`flex relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
-                            } w-full min-w-[700px] flex-col`}
+                          className={`flex relative justify-start items-start w-full ${isTechnicalDesktop ? "min-w-0" : "min-w-[700px]"} flex-col`}
                         >
                           <div className="flex flex-col-reverse items-start justify-start w-full">
-                            <div className="flex items-start justify-between w-full">
-                              <div className="flex gap-2 items-center justify-start w-full">
+                            <div className="flex items-start justify-between w-full min-w-0 gap-2">
+                              <div className="flex gap-2 items-center justify-start min-w-0 flex-1">
                               <Button1
                                 width={widthClass}
                                 text={`${is2XL ? "text-[15px]" : "text-[12px]"}`}
@@ -2209,7 +2173,7 @@ const filteredItems =
   </span>
 </div>
 </div>
-                              <div className="flex items-center space-x-3">
+                              <div className="flex items-center space-x-3 shrink-0">
                                 <div
                                   className="relative flex h-[28px] w-[160px] cursor-pointer items-center justify-center
                bg-blue-600 text-xs font-medium text-white
@@ -2298,8 +2262,7 @@ const filteredItems =
                     return (
                       <div
                         key={index}
-                        className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
-                          } w-full min-w-[700px] flex-col`}
+                        className={`flex cursor-pointer relative justify-start items-start w-full min-w-[700px] flex-col`}
                         onClick={() => {  // Add this onClick handler for popup
                           setSelectedProject(projectItem);
                           setShowModal(true);
@@ -2321,15 +2284,15 @@ const filteredItems =
                           </div>
                           <div className="border-t-2 border-[#000000] w-full"></div>
                         </div>
-                        <div className="flex mt-3 w-full pl-[2vw] justify-between items-center">
+                        <div className="flex mt-3 w-full pl-[2vw] justify-between items-center min-w-0 gap-4">
                           <div
-                            className={`text-[#000000] w-[25%] text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"
+                            className={`text-[#000000] w-[25%] min-w-0 break-words text-start flex font-normal ${is2XL ? "text-[15px]" : "text-[12px]"
                               } -tracking-[0.02rem]`}
                           >
                             {item.title}
                           </div>
                          <div
-  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[25%] ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
+  className={`text-[#000000] font-normal flex flex-col justify-center items-center w-[25%] min-w-0 ${is2XL ? "text-[15px]" : "text-[12px]"} -tracking-[0.02rem]`}
 >
   <div>
     Submission Date: {new Date(item.deadline).toLocaleDateString("en-GB", {
@@ -2344,11 +2307,11 @@ const filteredItems =
   />
 </div>
                           <div
-                            className={`text-[#000000] w-[30%] font-normal ${textSize} -tracking-[0.02rem]`}
+                            className={`text-[#000000] w-[30%] min-w-0 break-words font-normal ${textSize} -tracking-[0.02rem]`}
                           >
                             {item.clientName || "N/A"}
                           </div>
-                          <div className="flex w-[20%] items-center justify-end">
+                          <div className="flex w-[20%] shrink-0 items-center justify-end">
                             {loadingStatuses[projectItem.project_id] ? (
                               <div className="flex items-center space-x-2 text-slate-400 animate-pulse">
                                 {/* <RiLoader2Fill className="w-4 h-4 animate-spin" /> */}
@@ -2418,8 +2381,7 @@ const filteredItems =
                       return (
                         <div
                           key={index}
-                          className={`flex cursor-pointer relative justify-start items-start ${index === currentItems.length ? "mt-7" : "my-0"
-                            } w-full min-w-0 flex-col`}
+                          className={`flex cursor-pointer relative justify-start items-start w-full min-w-0 flex-col`}
                           onClick={() => {
                             setSelectedProject(projectItem);
                             setShowModal(true);
@@ -2555,8 +2517,7 @@ const filteredItems =
                         return (
                           <div
                             key={index}
-                            className={`flex relative justify-start items-start ${index === currentItems.length - 1 ? "mt-7" : "my-0"
-                              } w-full min-w-[700px] flex-col`}
+                            className={`flex relative justify-start items-start w-full min-w-[700px] flex-col`}
                           >
                             <div className="flex flex-col-reverse items-start justify-start w-full">
                               <div className="flex items-start gap-2 w-full">

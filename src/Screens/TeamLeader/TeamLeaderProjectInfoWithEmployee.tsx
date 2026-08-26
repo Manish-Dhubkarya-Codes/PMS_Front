@@ -28,7 +28,7 @@ import {
   getData,
 } from "../../BackendConnections/FetchBackendServices";
 import { IoCheckmarkDoneSharp } from "react-icons/io5";
-import { matchesChatMessage, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
+import { matchesChatMessage, playChatNotificationSound, safeSocketEmit, seenByEmployee, unlockChatNotificationSound } from "../../utils/chatLive";
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from "../../BackendConnections/useSocket";
 import { Commet } from "react-loading-indicators";
@@ -41,6 +41,7 @@ import {
   appendLocalMonitorFileMessage,
   formatMonitorSenderLabel,
   mergeMonitorChatMessage,
+  mergeMonitorSnapshot,
   // absoluteMonitorFileUrl,
 } from "../../FileSendUI/monitorChatMerge";
 import { buildChatFilePayload, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
@@ -558,32 +559,7 @@ useEffect(() => {
 
   allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-  // Keep any live flags that already exist
-  setChatMessages((prev) => {
-    if (prev.length === 0) return allMessages; // first load
-
-    return allMessages.map((newMsg) => {
-      const existing = prev.find(
-        (m) =>
-          Math.abs(
-            new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()
-          ) < 3000
-      );
-
-      if (existing && (existing.edited || existing.isDeleted)) {
-        return {
-          ...newMsg,
-          edited: true,
-          editedAt: existing.editedAt || newMsg.editedAt,
-          isDeleted: existing.isDeleted || newMsg.isDeleted,
-          deletedAt: existing.deletedAt || newMsg.deletedAt,
-          message: newMsg.isDeleted ? undefined : newMsg.message,
-          file: newMsg.isDeleted ? undefined : newMsg.file,
-        };
-      }
-      return newMsg;
-    });
-  });
+  setChatMessages((prev) => mergeMonitorSnapshot(allMessages, prev));
 }, [tlMonitorChats]);
 
   useEffect(() => {
@@ -596,11 +572,12 @@ useEffect(() => {
   }, [item]);
 
   useEffect(() => {
-    if (socket && connected && projectDetails?.project_id) {
-      socket.emit("joinEmployeeChat", projectDetails.project_id);
-      socket.emit("joinProject", projectDetails.project_id); // Join main project room for updates
-    }
-  }, [socket, connected, projectDetails?.project_id]);
+    const projectId = projectDetails?.project_id || item?.project_id;
+    if (!socket || !projectId) return;
+    safeSocketEmit(socket, "joinEmployeeChat", projectId);
+    safeSocketEmit(socket, "joinProject", projectId);
+    safeSocketEmit(socket, "requestTLMonitorChats", projectId);
+  }, [socket, connected, projectDetails?.project_id, item?.project_id]);
 
 
 
@@ -608,7 +585,8 @@ useEffect(() => {
   if (!socket) return;
 
   const applyMonitorMsg = (data: { fromRole: string; msg: any; projectId?: string | number }) => {
-    if (data.projectId && String(data.projectId) !== String(projectDetails?.project_id)) return;
+    const activeProjectId = projectDetails?.project_id || item?.project_id;
+    if (data.projectId && activeProjectId && String(data.projectId) !== String(activeProjectId)) return;
     setChatMessages((prev) =>
       mergeMonitorChatMessage(prev, data, {
         myId: String(myEmployeeId),
@@ -664,6 +642,15 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
   setProjectDetails((prev) => (prev ? { ...prev, status: data.status } : prev));
 };
 
+  const handleChats = (data: any) => {
+    if (data?.projectId && String(data.projectId) !== String(projectDetails?.project_id || item?.project_id)) {
+      return;
+    }
+    setTlMonitorChats(data);
+  };
+
+  socket.on("tlMonitorChats", handleChats);
+  socket.on("tlMonitorChatsUpdate", (payload: any) => handleChats(payload?.data || payload));
   socket.on("newTLMonitorMessage", handleNewMessage);
   socket.on("messageAck", handleMessageAck);
   socket.on("tlMonitorMessageEdited", handleEdited);
@@ -671,13 +658,15 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
   socket.on("projectStatusUpdated", handleProjectStatusUpdated);
 
   return () => {
+    socket.off("tlMonitorChats", handleChats);
+    socket.off("tlMonitorChatsUpdate");
     socket.off("newTLMonitorMessage", handleNewMessage);
     socket.off("messageAck", handleMessageAck);
     socket.off("tlMonitorMessageEdited", handleEdited);
     socket.off("tlMonitorMessageDeleted", handleDeleted);
     socket.off("projectStatusUpdated", handleProjectStatusUpdated);
   };
-}, [socket, projectDetails?.project_id, storedUserRole, playNotification, myEmployeeId]);
+}, [socket, projectDetails?.project_id, storedUserRole, playNotification, myEmployeeId, item?.project_id]);
 
   useEffect(() => {
     observer.current = new IntersectionObserver(
@@ -689,12 +678,12 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
             if (idx) {
               const msg = chatMessages[parseInt(idx)];
               const viewer =
-                storedUserRole === "Team Leader" ? "tl" : "monitor";
+                storedUserRole === "Team Leader" ? "tl" : "employee";
               if (
                 msg &&
                 msg.isLeft &&
                 !msg.fromClient && // Skip marking for client updates
-                !msg.seen_by.includes(viewer) &&
+                !(viewer === "tl" ? msg.seen_by.includes("tl") : seenByEmployee(msg.seen_by)) &&
                 msg.id !== undefined
               ) {
                 if (!requiresPreview(msg)) {
@@ -752,7 +741,7 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
         ? "audio"
         : "chat";
     let fromTL = msg.fromTL;
-    const viewer = storedUserRole === "Team Leader" ? "tl" : "monitor";
+    const viewer = storedUserRole === "Team Leader" ? "tl" : "employee";
     try {
       const response = await postData(
         `clientproject/mark_tl_monitor_message_seen/${projectDetails.project_id}`,
@@ -781,8 +770,8 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
 
   const isSeenByReceiver = (msg: ChatMessage) => {
     if (msg.isLeft || msg.fromClient) return false; // No checkmark on received or client updates
-    const receiver = storedUserRole === "Team Leader" ? "monitor" : "tl"; // Fixed: dynamic receiver
-    return msg.seen_by.includes(receiver);
+    const receiver = storedUserRole === "Team Leader" ? "employee" : "tl";
+    return receiver === "employee" ? seenByEmployee(msg.seen_by) : msg.seen_by.includes(receiver);
   };
 
   const getSeenText = (msg: ChatMessage) => {
@@ -796,13 +785,12 @@ const handleProjectStatusUpdated = (data: { projectId: string | number; status: 
   chatMessages.find(
     m => !m.fromTL && m.senderName?.trim()
   )?.senderName || "Employee";
-    const receiverRole = "Monitor"; // Or "Employee" if you want to detect solo, but using "Monitor" for receiver
     if (msg.seen_by.includes("tl")) {
       text += `Team Leader (${tlName})`;
     }
-    if (msg.seen_by.includes("monitor")) {
+    if (seenByEmployee(msg.seen_by)) {
       if (text) text += ", ";
-      text += `${receiverRole} (${receiverName})`;
+      text += `Employee (${receiverName})`;
     }
     return `Seen by ${text}`;
   };
@@ -989,7 +977,6 @@ const handleSendMessage = async (
     } finally {
       setLoading(false);
       setReplyToMessage(null);
-      fetchTlMonitorChats();
     }
   }
 };
@@ -1015,7 +1002,7 @@ const handleSendMessage = async (
       setSelectedFile(file);
       setIsModalOpen(true);
       const isReceived = msg.isLeft;
-      const viewer = storedUserRole === "Team Leader" ? "tl" : "monitor";
+      const viewer = storedUserRole === "Team Leader" ? "tl" : "employee";
       if (isReceived && !msg.seen_by.includes(viewer) && msg.id !== undefined) {
         markMessageAsSeen(msg);
       }
