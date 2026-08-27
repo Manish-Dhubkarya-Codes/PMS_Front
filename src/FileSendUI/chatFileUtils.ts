@@ -83,8 +83,9 @@ export function buildChatFilePayload(input: {
   name?: string | null;
   url?: string | null;
   type?: string | null;
+  originalName?: string | null;
 }) {
-  const name = input.name || "File";
+  const name = input.originalName || input.name || "File";
   const relativeUrl = toRelativeFileUrl(input.url || "", serverURL);
   const absoluteUrl = toAbsoluteFileUrl(relativeUrl, serverURL);
   const type = normalizeMimeType(input.type, name);
@@ -100,10 +101,72 @@ export function buildChatFilePayload(input: {
     },
     msgData: {
       name,
+      originalName: name,
       url: relativeUrl,
       type,
     },
   };
+}
+
+function isServerStoredFilename(name: string): boolean {
+  const base = (name || "").split(/[\\/]/).pop() || "";
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(\.[^.]+)?$/i.test(
+    base,
+  );
+}
+
+export function sanitizeDownloadFilename(
+  preferred?: string | null,
+  fileUrl?: string | null,
+): string {
+  const urlBase = (fileUrl || "").split(/[?#]/)[0].split(/[\\/]/).pop() || "file";
+  const raw = String(preferred || "").trim();
+  const base = raw.split(/[\\/]/).pop() || "";
+  if (base && !isServerStoredFilename(base)) return base;
+  if (base) return base;
+  return urlBase || "file";
+}
+
+/** Download a chat file using the original device filename, not the UUID on disk. */
+export async function downloadChatFile(
+  fileUrl: string | undefined | null,
+  originalName?: string | null,
+): Promise<void> {
+  if (!fileUrl) throw new Error("Missing file url");
+  const filename = sanitizeDownloadFilename(originalName, fileUrl);
+  const stored = (fileUrl.split(/[?#]/)[0].split(/[\\/]/).pop() || "").trim();
+
+  const trigger = (href: string, asName: string) => {
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = asName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  if (fileUrl.startsWith("blob:") || fileUrl.startsWith("data:")) {
+    trigger(fileUrl, filename);
+    return;
+  }
+
+  const apiUrl = `${serverURL}/clientproject/download_chat_file?file=${encodeURIComponent(stored)}&name=${encodeURIComponent(filename)}`;
+  const absolute = toAbsoluteFileUrl(fileUrl, serverURL);
+
+  try {
+    let response = await fetch(apiUrl, { credentials: "include" });
+    if (!response.ok) {
+      response = await fetch(absolute, { credentials: "include" });
+    }
+    if (!response.ok) throw new Error("Failed to fetch the file");
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    trigger(blobUrl, filename);
+    URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    trigger(absolute, filename);
+    throw err;
+  }
 }
 
 export type ChatUploaderRole =

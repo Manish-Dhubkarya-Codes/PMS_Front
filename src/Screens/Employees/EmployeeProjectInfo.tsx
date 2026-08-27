@@ -25,7 +25,7 @@ import {
   mergeMonitorChatMessage,
   mergeMonitorSnapshot,
 } from "../../FileSendUI/monitorChatMerge";
-import { buildChatFilePayload, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
+import { buildChatFilePayload, downloadChatFile, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 import { toAbsoluteFileUrl } from "../../FileSendUI/fileUrl";
 import { readStoredUserData } from "../../utils/authStorage";
 
@@ -1018,16 +1018,7 @@ useEffect(() => {
   };
   const handleDownloadFile = async (url: string, name: string) => {
     try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
+      await downloadChatFile(url, name);
     } catch (error) {
       console.error("Error downloading file:", error);
     }

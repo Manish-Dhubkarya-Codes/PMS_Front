@@ -53,7 +53,11 @@ export function mergeIncomingChatMessage<T extends Record<string, any>>(
       (incoming.data?.url || incoming.file?.url || incoming.type === "audio"));
 
   const incomingFileName =
-    incoming.data?.name || incoming.file?.name || undefined;
+    incoming.data?.originalName ||
+    incoming.data?.originalname ||
+    incoming.data?.name ||
+    incoming.file?.name ||
+    undefined;
   const incomingFileUrl =
     incoming.data?.url || incoming.file?.url || undefined;
   const incomingText =
@@ -180,6 +184,7 @@ export function mergeIncomingChatMessage<T extends Record<string, any>>(
   } else if (incomingFileUrl || incomingFileName) {
     newMsg.file = buildChatFilePayload({
       name: incomingFileName,
+      originalName: incomingFileName,
       url: incomingFileUrl,
       type: incoming.data?.type || incoming.file?.type,
     }).file;

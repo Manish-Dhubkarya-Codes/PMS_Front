@@ -54,7 +54,11 @@ export function storedChatFileData(
     parsed.file && typeof parsed.file === "object" ? parsed.file : null;
   const src = data || file;
   if (!src) return null;
-  const name = src.name || src.fileName || src.originalname;
+  const name =
+    src.originalName ||
+    src.originalname ||
+    src.name ||
+    src.fileName;
   const url = src.url || src.fileUrl || src.path;
   if (!name && !url) return null;
   return {

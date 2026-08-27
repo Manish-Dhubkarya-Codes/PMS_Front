@@ -44,7 +44,7 @@ import {
   mergeMonitorSnapshot,
   // absoluteMonitorFileUrl,
 } from "../../FileSendUI/monitorChatMerge";
-import { buildChatFilePayload, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
+import { buildChatFilePayload, downloadChatFile, formatChatTime, isChatAudioFile, normalizeMimeType } from "../../FileSendUI/chatFileUtils";
 
 interface ChatMessage {
   type: "text" | "file";
@@ -1027,31 +1027,7 @@ const handleSendMessage = async (
 
   const handleDownloadFile = async (url: string, name: string) => {
     try {
-      if (url.startsWith("blob:")) {
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {},
-        });
-        if (!response.ok) {
-          throw new Error("Failed to fetch the file");
-        }
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = blobUrl;
-        link.download = name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(blobUrl);
-      }
+      await downloadChatFile(url, name);
     } catch (error) {
       console.error("Error downloading file:", error);
       alert("Failed to download the file. Please try again.");

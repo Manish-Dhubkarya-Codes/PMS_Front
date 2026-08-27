@@ -40,6 +40,7 @@ import FileUploadBubble from "../../FileSendUI/FileUploadBubble";
 import { useProjectChatFileUpload } from "../../FileSendUI/useProjectChatFileUpload";
 import {
   buildChatFilePayload,
+  downloadChatFile,
   formatChatTime,
   normalizeMimeType,
 } from "../../FileSendUI/chatFileUtils";
@@ -1928,43 +1929,7 @@ const handleSendMessage = async (
   };
   const handleDownloadFile = async (url: string, name: string) => {
     try {
-      const finalURL =
-        url.startsWith("blob:") ||
-          url.startsWith("http://") ||
-          url.startsWith("https://")
-          ? url
-          : `${serverURL}${url}`;
-
-      if (finalURL.startsWith("blob:")) {
-        const link = document.createElement("a");
-        link.href = finalURL;
-        link.download = name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
-      }
-
-      const response = await fetch(finalURL, {
-        mode: "cors",
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch the file");
-      }
-
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      URL.revokeObjectURL(blobUrl);
+      await downloadChatFile(url, name);
     } catch (error) {
       console.error("Error downloading file:", error);
       alert("Failed to download the file. Please try again.");
@@ -2972,6 +2937,10 @@ const handleSendMessage = async (
                         : `${serverURL}${file.url}`
                     }
                     download={file.name}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleDownloadFile(file.url, file.name);
+                    }}
                     className="text-blue-600 underline truncate w-[70%]"
                   >
                     {file.name}

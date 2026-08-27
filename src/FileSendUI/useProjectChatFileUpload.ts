@@ -127,7 +127,8 @@ export function useProjectChatFileUpload(options: UseProjectChatFileUploadOption
 
       const payload = result?.data ? result.data : result;
       const built = buildChatFilePayload({
-        name: payload?.fileName || payload?.name || task.fileName,
+        name: task.fileName || payload?.fileName || payload?.name,
+        originalName: task.fileName || payload?.fileName || payload?.name,
         url: payload?.fileUrl || payload?.url || "",
         type: payload?.fileType || payload?.type || task.fileType,
       });
