@@ -46,6 +46,8 @@ interface ClientListProps {
   email: string;
   mobile: string;
   created_at?: string;
+  key_hint?: string | null;
+  key_display?: string;
 }
 interface TeamLeaderListProps extends ClientListProps {}
 interface EmployeeRegRequest {
@@ -67,6 +69,14 @@ const getDateTime = (value?: string | number | null) => {
   if (value == null || value === "") return 0;
   const t = new Date(value).getTime();
   return Number.isNaN(t) ? 0 : t;
+};
+
+const displaySecurityKey = (item: { key_id?: string; key_display?: string; key_hint?: string | null }) => {
+  if (item.key_display) return item.key_display;
+  if (item.key_hint) return `••••${item.key_hint}`;
+  const id = String(item.key_id || "");
+  if (id.startsWith("$2")) return "••••••••";
+  return id;
 };
 
 const sortByLatestDate = <T extends { created_at?: string; id?: string; key_id?: string }>(a: T, b: T) => {
@@ -709,12 +719,14 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
     const query = searchQuery.toLowerCase().trim();
     return combinedKeys.filter((item) => {
       const keyId = String(item.key_id || "").toLowerCase();
+      const keyDisplay = String(item.key_display || item.key_hint || "").toLowerCase();
       const name = String(item.name || "").toLowerCase();
       const email = String(item.email || "").toLowerCase();
       const mobile = String(item.mobile ?? "").toLowerCase();
       const matchesSearch =
         !query ||
-        keyId.includes(query) ||
+        keyDisplay.includes(query) ||
+        (!keyId.startsWith("$2") && keyId.includes(query)) ||
         name.includes(query) ||
         email.includes(query) ||
         mobile.includes(query);
@@ -1164,7 +1176,7 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
                       <div
                         className={`text-[#000000] w-[25%] text-start flex font-normal ${textSize} -tracking-[0.02rem]`}
                       >
-                        Security Key: {item.key_id}
+                        Security Key: {displaySecurityKey(item)}
                       </div>
                       <div
                         className={`text-[#000000] font-normal flex justify-center w-[30%] ${textSize} -tracking-[0.02rem]`}
