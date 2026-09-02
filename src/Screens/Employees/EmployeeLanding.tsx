@@ -843,7 +843,7 @@ const activeUnreadTotal = 0;
             : "w-full items-center justify-center"
         }`}
       >
-        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : "w-full max-w-[1280px] overflow-visible"} flex items-center flex-col space-y-4`}>
           <div className="w-full flex justify-center items-center">
             <div className="w-fit flex items-center space-x-10">
               {isMobileLayout && (
@@ -878,7 +878,7 @@ const activeUnreadTotal = 0;
                 centered
               />
             </div>
-            <div className="relative flex w-full items-start mt-0">
+            <div className="relative flex w-full items-start mt-6">
               {isMobileLayout ? (
                 renderDrawer && (
                   <div
@@ -906,9 +906,9 @@ const activeUnreadTotal = 0;
               )}
               <div
                 className={isMobileLayout ? "flex w-full flex-col" : "w-full min-w-0"}
-                style={isMobileLayout ? undefined : { paddingLeft: tableStart }}
+                style={isMobileLayout || filteredItems.length === 0 ? undefined : { paddingLeft: tableStart }}
               >
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto [&>*:first-child]:!mt-0 [&>div.flex.items-center.justify-center]:w-full [&>div.flex.items-center.justify-center]:text-center">
               {filteredItems.length > 0 ? (
                 currentItems.map((item, index) => {
                   const projectItem = item as ProjectRequestProps;

@@ -590,10 +590,10 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
       <div className={`flex items-center justify-center`}>
         <MainNavigation isMenuHide={false} />
         <div
-          className={` w-full ${!isMD?"":"min-h-screen"} ${
+          className={`w-full max-w-[1536px] ${!isMD?"":"min-h-screen"} ${
             isXXS || isXS || isSM || isMD || isLG ? "" : "flex items-center justify-center"
           } ${isXXS || isXS ? "pt-15 pb-5" : ""} ${
-            isXL ? "px-[8vw] gap-15" : is2XL ? "gap-20 px-[8vw]" : isLG || isMD || isSM || isXS || isXXS ? "px-[2vw]" : ""
+            isXL ? "px-[8vw] gap-15" : is2XL ? "gap-20 px-32" : isLG || isMD || isSM || isXS || isXXS ? "px-[2vw]" : ""
           }`}
         >
           {/* Left Side: Profile Info */}

@@ -1428,7 +1428,7 @@ const filteredItems =
             : "w-full items-center justify-center"
           }`}
       >
-        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : isTechnicalDesktop ? "w-full min-w-0" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+        <div className={`${isMobileLayout ? "w-fit overflow-x-auto" : isTechnicalDesktop ? "w-full max-w-[1280px] min-w-0" : "w-full max-w-[1280px] overflow-visible"} flex items-center flex-col space-y-4`}>
           <div className="w-full flex justify-center items-center">
             <div className="w-fit flex items-center space-x-10">
               {isMobileLayout && (
@@ -1513,9 +1513,9 @@ const filteredItems =
                       ? "col-start-2 row-start-2 min-w-0 pl-8"
                       : "w-full min-w-0 flex-1"
                 }
-                style={isMobileLayout || isTechnicalDesktop ? undefined : { paddingLeft: tableStart }}
+                style={isMobileLayout || isTechnicalDesktop || filteredItems.length === 0 ? undefined : { paddingLeft: tableStart }}
               >
-          <div className={`${isTechnicalDesktop || activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"} space-y-5`}>
+          <div className={`${isTechnicalDesktop || activeTab === "Active" ? "overflow-x-hidden w-full min-w-0" : "overflow-x-auto"} space-y-5 [&>*:first-child]:!mt-0 [&>div.flex.items-center.justify-center]:w-full [&>div.flex.items-center.justify-center]:text-center`}>
             {department === "Technical" ? (
               activeTab === "Requests" ? (
                 filteredItems.length > 0 ? (
@@ -2136,7 +2136,7 @@ const filteredItems =
                     );
                   })
                 ) : (
-                  <div className="text-[#000000] text-[14px] font-normal mt-7">
+                  <div className="flex w-full flex-col items-center justify-center text-center text-[#000000] text-[14px] font-normal">
                     No employee registrations found
                   </div>
                 )

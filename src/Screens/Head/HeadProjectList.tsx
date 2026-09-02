@@ -768,6 +768,10 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
   const currentProjects = filteredProjects.slice(startIndex, endIndex);
   const currentSecurityKeys = filteredSecurityKeys.slice(startIndex, endIndex);
   const currentEmployeeRequests = filteredEmployeeRequests.slice(startIndex, endIndex);
+  const isCurrentTabEmpty =
+    (activeTab === "All Projects" && currentProjects.length === 0) ||
+    (activeTab === "Security Keys" && currentSecurityKeys.length === 0) ||
+    (activeTab === "Verify Employee" && currentEmployeeRequests.length === 0);
   const projectFilters = ["Data Science", "AI", "Plagarism removal", "Thesis", "Software Development", "Deadline"];
   const departmentFilters = ["Technical", "Sales"];
   const statusFilterOptions = ["Pending", "Verified", "Rejected"];
@@ -926,7 +930,7 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
         }`}
       >
         
-        <div className={`${isXXS || isXS || isSM || isMD ? "w-fit overflow-x-auto" : "w-full overflow-visible"} flex items-center flex-col space-y-4`}>
+        <div className={`${isXXS || isXS || isSM || isMD ? "w-fit overflow-x-auto" : "w-full max-w-[1280px] overflow-visible"} flex items-center flex-col space-y-4`}>
           <div className="w-full flex justify-center items-center">
             <div className="w-fit flex items-center space-x-10">
             {(isXXS || isXS || isSM || isMD) && (
@@ -961,7 +965,7 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
   centered
 />
           </div>
-          <div className={`relative flex w-full items-start mt-7`}>
+          <div className={`relative flex w-full items-start mt-6`}>
           {(activeTab === "All Projects" || activeTab === "Verify Employee" || activeTab === "Employees" || activeTab === "Security Keys") && (
             (isXXS || isXS || isSM || isMD)
               ? renderDrawer && (
@@ -983,7 +987,7 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
                 </div>
               )
               : (
-              <div className="absolute left-0 top-4 [&>div]:mx-0">
+              <div className="absolute left-0 top-0 [&>div]:mx-0">
                 <Filter
                   key={activeTab}
                   filters={activeTab === "All Projects" ? projectFilters : activeTab === "Employees" ? departmentFilters : activeTab === "Verify Employee" ? statusFilterOptions : keyFilters}
@@ -1004,7 +1008,7 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
             style={
               isXXS || isXS || isSM || isMD
                 ? undefined
-                : { paddingLeft: tableStart }
+                : { paddingLeft: isCurrentTabEmpty ? 0 : tableStart }
             }
           >
           <div className={`flex  w-full gap-x-5 items-start shrink-0 flex-row`}>
@@ -1015,7 +1019,7 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
               : "w-full"
           }`}
         >
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto [&>*:first-child]:!mt-0 [&>div.flex.items-center.justify-center]:w-full [&>div.flex.items-center.justify-center]:text-center">
             {
   activeTab === "All Projects" ? (
     currentProjects.length > 0 ? (
