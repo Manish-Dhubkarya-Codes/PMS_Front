@@ -7,7 +7,7 @@ import Button1 from "../../UI_Components/Buttons/Button1";
 import PaginationNav from "../../UI_Components/Navigations/PaginationNav";
 import MainNavigation from "../../UI_Components/Navigations/MainNavigation";
 import { TbFilterBolt } from "react-icons/tb";
-import { FaCircleCheck } from "react-icons/fa6";
+import { FaCircleCheck, FaTrash } from "react-icons/fa6";
 import { IoCloseCircle } from "react-icons/io5";
 import { getData, postData, serverURL } from "../../BackendConnections/FetchBackendServices";
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
@@ -813,12 +813,20 @@ useEffect(() => {
       });
     };
 
+    const handleProjectDeleted = (data: { project_id: string }) => {
+      const id = String(data.project_id);
+      if (!id) return;
+      setProjectDetails((prev) => prev.filter((p) => String(p.project_id) !== id));
+    };
+
     const offA = onEvent("projectStatusUpdated", handleProjectStatusUpdate);
     const offB = onEvent("projectStatusUpdate", handleProjectStatusUpdate);
+    const offC = onEvent("projectDeleted", handleProjectDeleted);
 
     return () => {
       offA?.();
       offB?.();
+      offC?.();
     };
   }, [onEvent, fetchProjects]);
 
@@ -955,6 +963,23 @@ useEffect(() => {
         newSet.delete(requestId);
         return newSet;
       });
+    }
+  };
+
+  const handleDeleteProject = async (project_id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this project permanently? This action cannot be undone.")) return;
+    try {
+      const response = await postData('clientproject/delete_project', { project_id });
+      if (response.status) {
+        setProjectDetails((prev) => prev.filter((p) => p.project_id !== project_id));
+        alert("Project deleted successfully");
+      } else {
+        alert(response.message || "Failed to delete project");
+      }
+    } catch (err) {
+      console.error("Delete Project Error:", err);
+      alert("Failed to delete project");
     }
   };
 
@@ -2327,7 +2352,7 @@ const filteredItems =
                                   {projectItem.status}
                                 </span>
 
-                                {/* Action Button */}
+{/* Action Button */}
                                 <div
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -2336,17 +2361,27 @@ const filteredItems =
                                   }}
                                   title={projectItem.status === "Hold" ? "Activate Project" : "Put on Hold"}
                                   className={`
-                    cursor-pointer relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300
-                    ${projectItem.status === "Active" ? "bg-green-500" : "bg-gray-300"}
-                  `}
+                        cursor-pointer relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300
+                        ${projectItem.status === "Active" ? "bg-green-500" : "bg-gray-300"}
+                      `}
                                 >
                                   {/* Toggle knob */}
                                   <span
                                     className={`
-                      inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-300
-                      ${projectItem.status === "Active" ? "translate-x-5" : "translate-x-1"}
-                    `}
+                        inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-300
+                        ${projectItem.status === "Active" ? "translate-x-5" : "translate-x-1"}
+
+                      `}
                                   />
+                                </div>
+
+                                {/* Delete Project Button - Sales TL only */}
+                                <div
+                                  onClick={(e) => handleDeleteProject(projectItem.project_id, e)}
+                                  className="w-fit bg-red-100 hover:bg-red-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center ml-2"
+                                  title="Delete Project"
+                                >
+                                  <FaTrash size={16} className="text-red-500" />
                                 </div>
                               </div>
                             )}

@@ -5,7 +5,7 @@ import Button1 from "../../UI_Components/Buttons/Button1";
 import PaginationNav from "../../UI_Components/Navigations/PaginationNav";
 import MainNavigation from "../../UI_Components/Navigations/MainNavigation";
 import { TbFilterBolt } from "react-icons/tb";
-import { FaTrash, FaUsers } from "react-icons/fa";
+import { FaTrash, FaUsers, FaExclamationTriangle } from "react-icons/fa";
 import { IoKeyOutline } from "react-icons/io5";
 import CircularProgress from "../../UI_Components/Progresses/CircularProgress";
 import { useNavigate } from "react-router-dom";
@@ -73,7 +73,7 @@ const getDateTime = (value?: string | number | null) => {
 
 const displaySecurityKey = (item: { key_id?: string; key_display?: string; key_hint?: string | null }) => {
   if (item.key_display) return item.key_display;
-  if (item.key_hint) return `••••${item.key_hint}`;
+  if (item.key_hint) return item.key_hint;
   const id = String(item.key_id || "");
   if (id.startsWith("$2")) return "••••••••";
   return id;
@@ -466,15 +466,22 @@ useEffect(() => {
     fetchProjects();
   };
 
+  const handleProjectDeleted = (data: { project_id: string }) => {
+    setProjectDetails((prev) => prev.filter((p) => String(p.project_id) !== String(data.project_id)));
+  };
+
   const offA = onEvent("projectStatusUpdate", handleProjectStatusUpdate);
   const offB = onEvent("projectStatusUpdated", handleProjectStatusUpdate);
+  const offC = onEvent("projectDeleted", handleProjectDeleted);
 
   return () => {
     offA?.();
     offB?.();
+    offC?.();
     if (typeof offEvent === "function") {
       offEvent("projectStatusUpdate", handleProjectStatusUpdate);
       offEvent("projectStatusUpdated", handleProjectStatusUpdate);
+      offEvent("projectDeleted", handleProjectDeleted);
     }
   };
 }, [connected, onEvent, offEvent, fetchProjects]);
@@ -598,6 +605,35 @@ useEffect(() => {
     } catch (err) {
       setError(`Failed to edit ${isTeamLeader ? 'team leader' : 'client'}. Please try again.`);
       console.error("Edit Error:", err);
+    }
+  };
+  const handleDeleteProject = async (project_id: string) => {
+    if (!window.confirm("Are you sure you want to delete this project permanently? This action cannot be undone.")) return;
+    try {
+      const response = await postData('clientproject/delete_project', { project_id });
+      if (response.status) {
+        setProjectDetails((prev) => prev.filter((p) => p.project_id !== project_id));
+        alert("Project deleted successfully");
+      } else {
+        alert(response.message || "Failed to delete project");
+      }
+    } catch (err) {
+      console.error("Delete Project Error:", err);
+      alert("Failed to delete project");
+    }
+  };
+  const handleRequestDeleteProject = async (project_id: string) => {
+    const reason = window.prompt("Enter reason for deletion request (optional):");
+    try {
+      const response = await postData('clientproject/request_delete_project', { project_id, reason });
+      if (response.status) {
+        alert("Deletion request sent to Team Leader");
+      } else {
+        alert(response.message || "Failed to send deletion request");
+      }
+    } catch (err) {
+      console.error("Request Delete Project Error:", err);
+      alert("Failed to send deletion request");
     }
   };
 const handleVerifyEmployee = async (requestId: string, currentStatus?: string) => {
@@ -1130,10 +1166,26 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
   {/* <div>{item.progress}% Completed</div> */}
 </div>
               <div
-                className={`${textColor} w-[20%] space-y-1 font-normal text-[12px] -tracking-[0.02rem]`}
-              >
-                <div>₹ {item.budget}/-</div>
-                <div>Amount Left</div>
+  className={`${textColor} w-[20%] space-y-1 font-normal text-[12px] -tracking-[0.02rem]`}
+>
+  <div>₹ {item.budget}/-</div>
+  <div>Amount Left</div>
+</div>
+              <div className="flex items-center gap-2">
+                <div
+                  onClick={(e) => { e.stopPropagation(); handleDeleteProject(item.project_id); }}
+                  className="w-fit bg-red-100 hover:bg-red-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center"
+                  title="Delete Project"
+                >
+                  <FaTrash size={16} className="text-red-500" />
+                </div>
+                <div
+                  onClick={(e) => { e.stopPropagation(); handleRequestDeleteProject(item.project_id); }}
+                  className="w-fit bg-orange-100 hover:bg-orange-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center"
+                  title="Request to Delete"
+                >
+                  <FaExclamationTriangle size={16} className="text-orange-500" />
+                </div>
               </div>
             </div>
           </div>

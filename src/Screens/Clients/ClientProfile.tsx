@@ -9,7 +9,7 @@ import { getData } from "../../BackendConnections/FetchBackendServices";
 import { useNavigate } from "react-router-dom";
 import { IoAdd } from "react-icons/io5";
 import { BsArchive } from "react-icons/bs";
-import { FaUser } from "react-icons/fa";
+import { FaUser, FaExclamationTriangle } from "react-icons/fa";
 import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 import { useSocket } from "../../BackendConnections/useSocket";
 import { isQuietProjectStatus, playChatNotificationSound, unlockChatNotificationSound } from "../../utils/chatLive";
@@ -346,11 +346,19 @@ useEffect(() => {
       );
     };
 
+    const handleProjectDeleted = (data: { project_id: string }) => {
+      const id = String(data.project_id);
+      if (!id) return;
+      setProjectDetails((prev) => prev.filter((project) => String(project.ProjectId) !== id));
+    };
+
     const offA = onEvent("projectStatusUpdated", handleProjectStatusUpdated);
     const offB = onEvent("projectStatusUpdate", handleProjectStatusUpdated);
+    const offC = onEvent("projectDeleted", handleProjectDeleted);
     return () => {
       offA?.();
       offB?.();
+      offC?.();
     };
   }, [connected, emitEvent, onEvent, clientData?.ClientId]);
 
@@ -540,6 +548,22 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
 
   const handleNavigation = (project: any) => {
     navigate("/projectupload", { state: { ProjectDetails: project } });
+  };
+
+  const handleRequestDeleteProject = async (project_id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const reason = window.prompt("Enter reason for deletion request (optional):");
+    try {
+      const response = await postData('clientproject/request_delete_project', { project_id, reason });
+      if (response.status) {
+        alert("Deletion request sent to Team Leader");
+      } else {
+        alert(response.message || "Failed to send deletion request");
+      }
+    } catch (err) {
+      console.error("Request Delete Project Error:", err);
+      alert("Failed to send deletion request");
+    }
   };
 
  if (!clientData) {
@@ -839,6 +863,15 @@ const sortedProjectDetails = [...projectDetails].sort((a, b) => {
       return "HOLD";
     })()}
   </div>
+                        <div className="flex items-center gap-2">
+                          <div
+                            onClick={(e) => handleRequestDeleteProject(item.ProjectId, e)}
+                            className="w-fit bg-orange-100 hover:bg-orange-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center"
+                            title="Request to Delete"
+                          >
+                            <FaExclamationTriangle size={16} className="text-orange-500" />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
