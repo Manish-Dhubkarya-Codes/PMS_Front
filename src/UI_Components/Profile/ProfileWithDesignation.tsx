@@ -136,7 +136,7 @@ const handleDeclineClick = () => {
   const largeContainerClass = `${buttonContainerClass} ${isXS ? "ml-48" : isSM ? "ml-50" : isMD ? "ml-50" : isLG ? "ml-52" : isXL ? "ml-55" : is2XL ? "ml-55" : "ml-45"}`;
 
   return (
-    <div className="flex items-start relative" style={{ cursor: "pointer" }}>
+    <div className="flex items-start bg-red-300 relative" style={{ cursor: "pointer" }}>
       {/* Dropdown Menu */}
 {(onRemoveEmployee || isTeamLeader || onRemoveAsTL || onPromoteToTL) && (
   <div className="absolute -top-1 left-20 z-20">
@@ -160,7 +160,7 @@ const handleDeclineClick = () => {
       <FaEllipsisV size={14} />
     </div>
     {showMenu && (
-      <div className="profile-menu absolute right-0 top-6 bg-white border border-gray-200 rounded-xl shadow-xl z-50 min-w-[170px] overflow-hidden">
+      <div className="profile-menu absolute -right-40 top-6 bg-white border border-gray-200 rounded-xl shadow-xl z-50 min-w-[170px] overflow-hidden">
         {onRemoveEmployee && (
           <div
             onClick={(e) => {
@@ -181,7 +181,7 @@ const handleDeclineClick = () => {
               onRemoveAsTL();
               setShowMenu(false);
             }}
-            className="block cursor-pointer w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+            className="cursor-pointer w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
           >
             Remove from Team Leader
           </div>

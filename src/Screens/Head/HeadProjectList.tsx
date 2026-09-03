@@ -368,10 +368,9 @@ const fetchProjects = useCallback(async () => {
             const progressResponse = await getData(`clientproject/get_progress/${project.project_id}`);
             let progressPercentage = 0;
             if (progressResponse.status && progressResponse.progress) {
-              const { payment = '0%', work = '0%' } = progressResponse.progress;
+              const { payment = '0%' } = progressResponse.progress;
               const paymentNum = parseInt(payment.replace('%', '')) || 0;
-              const workNum = parseInt(work.replace('%', '')) || 0;
-              progressPercentage = (paymentNum + workNum) / 2;
+              progressPercentage = paymentNum;
             }
             return {
               title: proj.title || "",
@@ -474,17 +473,42 @@ useEffect(() => {
   const offB = onEvent("projectStatusUpdated", handleProjectStatusUpdate);
   const offC = onEvent("projectDeleted", handleProjectDeleted);
 
+return () => {
+      offA?.();
+      offB?.();
+      offC?.();
+      if (typeof offEvent === "function") {
+        offEvent("projectStatusUpdate", handleProjectStatusUpdate);
+        offEvent("projectStatusUpdated", handleProjectStatusUpdate);
+        offEvent("projectDeleted", handleProjectDeleted);
+      }
+    };
+  }, [connected, onEvent, offEvent, fetchProjects]);
+
+// Listen for live progress updates
+useEffect(() => {
+  if (!connected) return;
+
+  const handleProgressUpdate = (data: { projectId: string; progress: { payment: string; work: string; start: string } }) => {
+    const { projectId, progress } = data;
+    if (!projectId || !progress) return;
+    const paymentNum = parseInt(progress.payment?.replace('%', '')) || 0;
+    setProjectDetails((prev) =>
+      prev.map((p) =>
+        String(p.project_id) === String(projectId) ? { ...p, progress: paymentNum } : p
+      )
+    );
+  };
+
+  const offProgress = onEvent("progressUpdate", handleProgressUpdate);
+
   return () => {
-    offA?.();
-    offB?.();
-    offC?.();
+    offProgress?.();
     if (typeof offEvent === "function") {
-      offEvent("projectStatusUpdate", handleProjectStatusUpdate);
-      offEvent("projectStatusUpdated", handleProjectStatusUpdate);
-      offEvent("projectDeleted", handleProjectDeleted);
+      offEvent("progressUpdate", handleProgressUpdate);
     }
   };
-}, [connected, onEvent, offEvent, fetchProjects]);
+}, [connected, onEvent, offEvent]);
 
 // ✅ CONSOLIDATED + RELIABLE EMPLOYEE REGISTRATION SOCKET LISTENERS
 // Replace the existing consolidated employee registration useEffect with:
@@ -620,20 +644,6 @@ useEffect(() => {
     } catch (err) {
       console.error("Delete Project Error:", err);
       alert("Failed to delete project");
-    }
-  };
-  const handleRequestDeleteProject = async (project_id: string) => {
-    const reason = window.prompt("Enter reason for deletion request (optional):");
-    try {
-      const response = await postData('clientproject/request_delete_project', { project_id, reason });
-      if (response.status) {
-        alert("Deletion request sent to Team Leader");
-      } else {
-        alert(response.message || "Failed to send deletion request");
-      }
-    } catch (err) {
-      console.error("Request Delete Project Error:", err);
-      alert("Failed to send deletion request");
     }
   };
 const handleVerifyEmployee = async (requestId: string, currentStatus?: string) => {
@@ -1178,13 +1188,6 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
                   title="Delete Project"
                 >
                   <FaTrash size={16} className="text-red-500" />
-                </div>
-                <div
-                  onClick={(e) => { e.stopPropagation(); handleRequestDeleteProject(item.project_id); }}
-                  className="w-fit bg-orange-100 hover:bg-orange-200 hover:scale-95 transition-transform duration-200 cursor-pointer p-2 rounded-full flex justify-center items-center"
-                  title="Request to Delete"
-                >
-                  <FaExclamationTriangle size={16} className="text-orange-500" />
                 </div>
               </div>
             </div>
