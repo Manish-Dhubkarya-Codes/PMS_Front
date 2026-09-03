@@ -434,9 +434,9 @@ useEffect(() => {
               <div
                 className={`hidden md:grid items-end custom-indent-wrap gap-x-5 gap-y-5 ${
                   isMD || isLG
-                    ? "grid-cols-3"
+                    ? "grid-cols-5"
                     : isXL || is2XL
-                    ? "grid-cols-2"
+                    ? "grid-cols-3"
                     : "grid-cols-1"
                 }`}
               >

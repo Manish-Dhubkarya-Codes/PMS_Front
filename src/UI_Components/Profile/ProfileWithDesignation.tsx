@@ -136,7 +136,7 @@ const handleDeclineClick = () => {
   const largeContainerClass = `${buttonContainerClass} ${isXS ? "ml-48" : isSM ? "ml-50" : isMD ? "ml-50" : isLG ? "ml-52" : isXL ? "ml-55" : is2XL ? "ml-55" : "ml-45"}`;
 
   return (
-    <div className="flex items-start bg-red-300 relative" style={{ cursor: "pointer" }}>
+    <div className="flex items-start relative" style={{ cursor: "pointer" }}>
       {/* Dropdown Menu */}
 {(onRemoveEmployee || isTeamLeader || onRemoveAsTL || onPromoteToTL) && (
   <div className="absolute -top-1 left-20 z-20">
@@ -318,7 +318,7 @@ const handleDeclineClick = () => {
                   </div>
                 )
               ) : (
-                <div className="relative mb-5 w-[200px] h-[35px] flex rounded overflow-hidden">
+                <div className="relative mb-5 w-[180px] text-[14px] h-[35px] flex rounded overflow-hidden">
   {actionLoading ? (
     <div className="w-full h-full flex items-center justify-center bg-gray-400 text-white cursor-not-allowed">
       {actionLoading === "assign"

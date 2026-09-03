@@ -311,7 +311,7 @@ const AllEmployeeList: React.FC<AllEmployeeListProps> = ({ selectedDepartment })
                 </div>
                 {/* Dropdown menu for Employee */}
                 {showEmployeeMenu === employee.employeeId && (
-                  <div className="employee-menu absolute top-7 -right-20 bg-white border border-gray-300 rounded-md  z-50 min-w-[150px]">
+                  <div className="employee-menu absolute top-4.5 -right-40 bg-white border border-gray-300 rounded-md  z-50 min-w-[150px]">
                     <div
                       onClick={() => {
                         setSelectedEmployeeForPromote(employee);
