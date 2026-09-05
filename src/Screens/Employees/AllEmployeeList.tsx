@@ -3,7 +3,7 @@ import ProfileWithDesignation from "../../UI_Components/Profile/ProfileWithDesig
 import { useEffect, useState } from "react";
 import { getData, postData, serverURL } from "../../BackendConnections/FetchBackendServices";
 import { BlinkBlur, Commet } from "react-loading-indicators";
-
+import PageLoadingComponent from "../../UI_Components/Pop_Ups/PageLoadingComponent";
 interface Employee {
   employeeId: string;
   employeeName: string;
@@ -152,9 +152,23 @@ const AllEmployeeList: React.FC<AllEmployeeListProps> = ({ selectedDepartment })
   const is2XL = width > 1536;
 
   if (loading) {
-    return <div className={`pt-[2vh] flex text-gray-500`}>
-      <Commet color="#32cd32" size="medium" text="Loading requests..." textColor="#000" />
-    </div>
+    return (
+      <div className={`flex flex-col w-full text-[12px] space-y-10`}>
+        <div className="w-full flex items-start flex-col space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="w-1.5 h-8 bg-blue-600 rounded-full" />
+            <h2 className={`${isXS || isSM ? "text-[16px]" : "text-[20px]"} font-bold text-slate-800 tracking-tight uppercase`}>
+              Team Leaders <span className="text-slate-400 font-medium ml-1">/ {selectedDepartment}</span>
+            </h2>
+          </div>
+          <div className={`items-center w-[70%] scale-75 gap-x-5 gap-y-5 py-5`}>
+            <div className={`${isMD || isLG || isXL || is2XL ? "col-span-3" : "col-span-1"} flex justify-center items-center`}>
+              <BlinkBlur color="#32cd32" size="large" text="" textColor="" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (error) {
