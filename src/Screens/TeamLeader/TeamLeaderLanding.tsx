@@ -1057,72 +1057,67 @@ useEffect(() => {
       .map((item: ProjectListProps) => String(item.project_id))
   );
 
+const query = searchQuery.toLowerCase().trim();
+
+const matchesProject = (item: ProjectListProps) =>
+  !query ||
+  item.workstream.toLowerCase().includes(query) ||
+  item.title.toLowerCase().includes(query) ||
+  item.clientName.toLowerCase().includes(query) ||
+  item.project_id.toString().includes(query) ||
+  item.deadline.toLowerCase().includes(query) ||
+  (item.status || "").toLowerCase().includes(query);
+
+const matchesGroupedRequest = (item: GroupedRequestProps) =>
+  !query ||
+  item.workstream.toLowerCase().includes(query) ||
+  item.title.toLowerCase().includes(query) ||
+  item.project_id.toString().includes(query) ||
+  item.deadline.toLowerCase().includes(query) ||
+  item.employees.some((emp) => emp.name.toLowerCase().includes(query));
+
+const matchesFilter = (workstream: string) =>
+  selectedFilters.length === 0 ||
+  selectedFilters.some((filter) =>
+    filter.toLowerCase().includes(workstream.toLowerCase())
+  );
+
 const filteredItems =
   department === "Technical"
     ? activeTab === "Active"
       ? projectDetails.filter((item: ProjectListProps) =>
           item.status === "Active" &&
           !requestedProjectIds.has(String(item.project_id)) &&
-          (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.project_id.toString().includes(searchQuery) ||
-            item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (typeof item.description === "string" &&
-              item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-          (selectedFilters.length === 0 ||
-            selectedFilters.some((filter) =>
-              filter.toLowerCase().includes(item.workstream.toLowerCase())
-            ))
+          matchesProject(item) &&
+          matchesFilter(item.workstream)
         )
       : activeTab === "Assigned"
         ? Object.values(groupedOngoingRequests)
             .filter((item: GroupedRequestProps) =>
               !completedProjectIds.has(String(item.project_id)) &&
-              (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.project_id.toString().includes(searchQuery) ||
-                item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.employees.some((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-              (selectedFilters.length === 0 ||
-                selectedFilters.some((filter) =>
-                  filter.toLowerCase().includes(item.workstream.toLowerCase())
-                ))
+              matchesGroupedRequest(item) &&
+              matchesFilter(item.workstream)
             )
             .map((item: GroupedRequestProps) => {
-  const proj = projectDetails.find(p => String(p.project_id) === String(item.project_id));
-  return {
-    ...item,
-    assignedEmployees: item.employees.map((emp) => emp.name).join(", "),
-    active_date: proj?.active_date || null,
-    status: proj?.status || item.status,
-  } as ProjectWithEmployees;
-})
+              const proj = projectDetails.find(p => String(p.project_id) === String(item.project_id));
+              return {
+                ...item,
+                assignedEmployees: item.employees.map((emp) => emp.name).join(", "),
+                active_date: proj?.active_date || null,
+                status: proj?.status || item.status,
+              } as ProjectWithEmployees;
+            })
       : activeTab === "Requests"
-  ? Object.values(groupedPendingRequests).filter((item: GroupedRequestProps) =>
-            (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.project_id.toString().includes(searchQuery) ||
-              item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.employees.some((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-            (selectedFilters.length === 0 ||
-              selectedFilters.some((filter) =>
-                filter.toLowerCase().includes(item.workstream.toLowerCase())
-              ))
+        ? Object.values(groupedPendingRequests).filter((item: GroupedRequestProps) =>
+            matchesGroupedRequest(item) &&
+            matchesFilter(item.workstream)
           )
       : activeTab === "On-Going"
         ? Object.values(groupedOngoingRequests)
             .filter((item: GroupedRequestProps) =>
               !completedProjectIds.has(String(item.project_id)) &&
-              (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.project_id.toString().includes(searchQuery) ||
-                item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.employees.some((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-              (selectedFilters.length === 0 ||
-                selectedFilters.some((filter) =>
-                  filter.toLowerCase().includes(item.workstream.toLowerCase())
-                ))
+              matchesGroupedRequest(item) &&
+              matchesFilter(item.workstream)
             )
             .map((item: GroupedRequestProps) => {
               const proj = projectDetails.find(p => String(p.project_id) === String(item.project_id));
@@ -1136,17 +1131,8 @@ const filteredItems =
       : activeTab === "Completed"
         ? projectDetails.filter((item: ProjectListProps) =>
             item.status === "Completed" &&
-            (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.project_id.toString().includes(searchQuery) ||
-              item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              (typeof item.description === "string" &&
-                item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-            (selectedFilters.length === 0 ||
-              selectedFilters.some((filter) =>
-                filter.toLowerCase().includes(item.workstream.toLowerCase())
-              ))
+            matchesProject(item) &&
+            matchesFilter(item.workstream)
           )
       : activeTab === "Verify Employee"
         ? filteredEmployeeRequests
@@ -1155,47 +1141,20 @@ const filteredItems =
       ? activeTab === "SOP List"
         ? projectDetails.filter((item: ProjectListProps) =>
             item.status !== "Completed" &&
-            (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.project_id.toString().includes(searchQuery) ||
-              item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              (typeof item.description === "string" &&
-                item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-            (selectedFilters.length === 0 ||
-              selectedFilters.some((filter) =>
-                filter.toLowerCase().includes(item.workstream.toLowerCase())
-              ))
+            matchesProject(item) &&
+            matchesFilter(item.workstream)
           )
         : activeTab === "Active"
           ? projectDetails.filter((item: ProjectListProps) =>
               item.status === "Active" &&
-              (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.project_id.toString().includes(searchQuery) ||
-                item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (typeof item.description === "string" &&
-                  item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-              (selectedFilters.length === 0 ||
-                selectedFilters.some((filter) =>
-                  filter.toLowerCase().includes(item.workstream.toLowerCase())
-                ))
+              matchesProject(item) &&
+              matchesFilter(item.workstream)
             )
           : activeTab === "Completed"
             ? projectDetails.filter((item: ProjectListProps) =>
                 item.status === "Completed" &&
-                (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  item.project_id.toString().includes(searchQuery) ||
-                  item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  (typeof item.description === "string" &&
-                    item.description.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-                (selectedFilters.length === 0 ||
-                  selectedFilters.some((filter) =>
-                    filter.toLowerCase().includes(item.workstream.toLowerCase())
-                  ))
+                matchesProject(item) &&
+                matchesFilter(item.workstream)
               )
             : []
       : [];

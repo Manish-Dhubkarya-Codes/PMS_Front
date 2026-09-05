@@ -731,26 +731,22 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
   });
  const filteredProjects = sortedProjectDetails.filter(
   (item) => {
-    // Existing search logic
+    const query = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.project_id.toString().includes(searchQuery) ||
-      item.deadline.toString().includes(searchQuery.toLowerCase()) ||
-      item.budget.toString().includes(searchQuery.toLowerCase());
+      !query ||
+      item.workstream.toLowerCase().includes(query) ||
+      item.title.toLowerCase().includes(query) ||
+      item.clientName.toLowerCase().includes(query) ||
+      item.project_id.toString().includes(query) ||
+      item.deadline.toLowerCase().includes(query);
 
-    // Enhanced filter logic
     if (selectedFilters.length === 0) return matchesSearch;
 
-    // Check for workstream matches (existing)
     const workstreamMatch = selectedFilters.some(filter => filter.toLowerCase() === item.workstream.toLowerCase());
-
-    // Handle "Deadline" filter specially
     const deadlineMatch = selectedFilters.some(filter => filter === "Deadline");
     if (deadlineMatch) {
       const projectYear = new Date(item.deadline).getFullYear().toString();
       const status = new Date(item.deadline) > new Date() ? "On-Going" : "Submitted";
-      // Example: Show all "On-Going" or within year range; customize as needed
       return matchesSearch && (status === "On-Going" || (projectYear >= projectStartDate && projectYear <= projectEndDate));
     }
 
@@ -769,13 +765,15 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
       const name = String(item.name || "").toLowerCase();
       const email = String(item.email || "").toLowerCase();
       const mobile = String(item.mobile ?? "").toLowerCase();
+      const type = item.type.toLowerCase();
       const matchesSearch =
         !query ||
         keyDisplay.includes(query) ||
         (!keyId.startsWith("$2") && keyId.includes(query)) ||
         name.includes(query) ||
         email.includes(query) ||
-        mobile.includes(query);
+        mobile.includes(query) ||
+        type.includes(query);
       if (!matchesSearch) return false;
       if (keyFilter === "Client") return item.type === "client";
       if (keyFilter === "Team Leader") return item.type === "teamLeader";
@@ -783,16 +781,23 @@ const handleDeclineEmployee = async (requestId: string, currentStatus?: string) 
     });
   }, [combinedKeys, searchQuery, keyFilter]);
   const filteredEmployeeRequests = employeeRegRequests.filter(
-    (item) =>
-      (item.employeeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.employeeMail.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.employmentID.toString().includes(searchQuery)) &&
-      (statusFilters.length === 0 ||
+    (item) => {
+      const query = searchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !query ||
+        item.employeeName.toLowerCase().includes(query) ||
+        item.employeeMail.toLowerCase().includes(query) ||
+        item.employmentID.toString().includes(query) ||
+        item.status.toLowerCase().includes(query);
+      const matchesStatus =
+        statusFilters.length === 0 ||
         statusFilters.some(filter =>
           (filter === "Pending" && item.status === "pending") ||
           (filter === "Verified" && item.status === "accepted") ||
           (filter === "Rejected" && item.status === "rejected")
-        ))
+        );
+      return matchesSearch && matchesStatus;
+    }
   ).slice().sort(sortByLatestDate);
   const pageSize = activeTab === "Security Keys" ? Math.max(itemsPerPage, filteredSecurityKeys.length) : itemsPerPage;
   const totalPages = Math.max(

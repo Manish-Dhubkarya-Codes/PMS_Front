@@ -712,24 +712,22 @@ const activeUnreadTotal = 0;
   }, [activeTab, projectDetails, employeeRequests]);
 
   const filteredItems = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
     return data.filter((item) => {
-      const descriptionStr = Array.isArray(item.description)
-        ? item.description.join(" ")
-        : typeof item.description === "string"
-        ? item.description
-        : "";
-      return (
-        (item.workstream.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          ("clientName" in item && item.clientName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          item.project_id.toString().includes(searchQuery) ||
-          item.deadline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          descriptionStr.toLowerCase().includes(searchQuery.toLowerCase())) &&
-        (selectedFilters.length === 0 ||
-          selectedFilters.some((filter) =>
-            item.workstream.toLowerCase().includes(filter.toLowerCase())
-          ))
-      );
+      const matchesSearch =
+        !query ||
+        item.workstream.toLowerCase().includes(query) ||
+        item.title.toLowerCase().includes(query) ||
+        ("clientName" in item && item.clientName.toLowerCase().includes(query)) ||
+        item.project_id.toString().includes(query) ||
+        item.deadline.toLowerCase().includes(query) ||
+        item.status.toLowerCase().includes(query);
+      const matchesFilter =
+        selectedFilters.length === 0 ||
+        selectedFilters.some((filter) =>
+          item.workstream.toLowerCase().includes(filter.toLowerCase())
+        );
+      return matchesSearch && matchesFilter;
     });
   }, [data, searchQuery, selectedFilters]);
 
